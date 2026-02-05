@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create Account — The Best Wins</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+
+  <div class="page-content access-page">
+    <a href="index.html" class="back-btn">← Back</a>
+
+    <div class="access-header" style="margin-top: 10px;">
+      <h1>Create Account</h1>
+      <p id="tier-line">Choose a method to continue</p>
+    </div>
+
+    <div class="tier-chart" style="margin-bottom: 30px;">
+      <a class="tier-link" href="#" aria-label="Create with Discord">
+        <div class="tier-card tier-1" role="button" tabindex="0">
+          <h2>Discord</h2>
+          <ul>
+            <li>Fast verification</li>
+            <li>Instant access</li>
+            <li>Recommended</li>
+          </ul>
+        </div>
+      </a>
+
+      <a class="tier-link" href="#" aria-label="Create with Telegram">
+        <div class="tier-card tier-2" role="button" tabindex="0">
+          <h2>Telegram</h2>
+          <ul>
+            <li>Private</li>
+            <li>Simple setup</li>
+            <li>Quick support</li>
+          </ul>
+        </div>
+      </a>
+    </div>
+
+    <div style="color:#666; font-size:13px; line-height:1.6; max-width:780px; margin:0 auto;">
+      Replace the two links on this page with your real Discord invite / Telegram URL when you’re ready.
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+  <script>
+    (function () {
+      const params = new URLSearchParams(location.search);
+      const tier = params.get('tier');
+      const tierLine = document.getElementById('tier-line');
+      if (tierLine && (tier === '1' || tier === '2')) {
+        tierLine.textContent = `Selected: Tier ${tier} — choose a method to continue`;
+      }
+    })();
+  </script>
+</body>
+</html>

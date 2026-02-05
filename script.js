@@ -1,0 +1,745 @@
+// ===== BACKGROUND PARTICLE EFFECT =====
+function initBackground() {
+  const canvas = document.getElementById('bg-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  let w, h;
+  function resize() {
+    w = canvas.width = window.innerWidth;
+    h = canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const particles = [];
+  const PARTICLE_COUNT = 70;
+
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    particles.push({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      vx: (Math.random() - 0.5) * 0.4,
+      vy: (Math.random() - 0.5) * 0.4,
+      r: Math.random() * 2 + 0.5,
+      color: Math.random() > 0.5
+        ? `rgba(124, 58, 237, ${Math.random() * 0.4 + 0.1})`
+        : `rgba(255, 77, 109, ${Math.random() * 0.3 + 0.05})`,
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.x < 0) p.x = w;
+      if (p.x > w) p.x = 0;
+      if (p.y < 0) p.y = h;
+      if (p.y > h) p.y = 0;
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+
+      // Draw connections
+      for (let j = i + 1; j < particles.length; j++) {
+        const p2 = particles[j];
+        const dx = p.x - p2.x;
+        const dy = p.y - p2.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < 150) {
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.strokeStyle = `rgba(124, 58, 237, ${0.06 * (1 - dist / 150)})`;
+          ctx.lineWidth = 0.5;
+          ctx.stroke();
+        }
+      }
+    }
+
+    requestAnimationFrame(draw);
+  }
+
+  draw();
+}
+
+// ===== DISCLAIMER LOGIC =====
+function initDisclaimer() {
+  const overlay = document.getElementById('disclaimer-overlay');
+  const homepage = document.getElementById('homepage');
+  const acceptBtn = document.getElementById('accept-btn');
+
+  if (!overlay || !acceptBtn) return;
+
+  // Check if already accepted
+  if (sessionStorage.getItem('age_verified') === 'true') {
+    overlay.classList.add('hidden');
+    if (homepage) homepage.classList.remove('blurred');
+    return;
+  }
+
+  acceptBtn.addEventListener('click', () => {
+    overlay.style.animation = 'fadeOut 0.3s ease forwards';
+    setTimeout(() => {
+      overlay.classList.add('hidden');
+      if (homepage) homepage.classList.remove('blurred');
+      sessionStorage.setItem('age_verified', 'true');
+    }, 280);
+  });
+}
+
+// ===== FOLDER PAGE: LOAD MEDIA =====
+function initFolderPage() {
+  const grid = document.querySelector('.media-grid');
+  if (!grid) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const folder = params.get('folder');
+  if (!folder) return;
+
+  // Set title
+  const titleEl = document.querySelector('.folder-page h1');
+  const breadcrumbCurrent = document.querySelector('.breadcrumb .current');
+  if (titleEl) titleEl.textContent = folder;
+  if (breadcrumbCurrent) breadcrumbCurrent.textContent = folder;
+
+  // Load actual files from the directory (requires local server)
+  loadFolderFromApi(folder, grid);
+}
+
+async function loadFolderFromApi(folder, grid) {
+  const previewCta = document.getElementById('preview-cta');
+  const setPreviewCta = (visible) => {
+    if (!previewCta) return;
+    previewCta.hidden = !visible;
+  };
+
+  setPreviewCta(false);
+
+  grid.innerHTML = `
+    <div style="grid-column: 1/-1; text-align: center; padding: 50px 20px; color: #666;">
+      <div style="font-size: 44px; margin-bottom: 14px;">⏳</div>
+      <h3 style="color: #aaa; margin-bottom: 8px;">Loading files…</h3>
+      <p style="font-size: 13px;">Reading <strong>${folder}</strong></p>
+    </div>`;
+
+  try {
+    const resp = await fetch(`/api/list?folder=${encodeURIComponent(folder)}`);
+    if (resp.status === 401) {
+      // No auth: show free preview (if enabled on server)
+      const prev = await fetch(`/api/preview/list?folder=${encodeURIComponent(folder)}`, { cache: 'no-store' });
+      if (prev.ok) {
+        const data = await prev.json();
+        const files = Array.isArray(data.files) ? data.files : [];
+        if (files.length) {
+          renderMediaGrid(grid, files);
+          const titleEl = document.querySelector('.folder-page h1');
+          if (titleEl) titleEl.textContent = `${folder} (Preview)`;
+          setPreviewCta(true);
+          return;
+        }
+      }
+
+      grid.innerHTML = `
+        <div style="grid-column: 1/-1; text-align: center; padding: 60px 20px; color: #666;">
+          <div style="font-size: 48px; margin-bottom: 20px;">👀</div>
+          <h3 style="color: #bbb; margin-bottom: 10px;">Preview unavailable</h3>
+          <p style="max-width: 680px; margin: 0 auto; line-height: 1.7;">
+            This collection doesn’t have a free preview right now.
+          </p>
+        </div>`;
+
+      // Still show the CTA so users can choose to log in.
+      setPreviewCta(true);
+      return;
+    }
+    if (!resp.ok) {
+      throw new Error(`API error: ${resp.status}`);
+    }
+
+    /** @type {{files: Array<{name: string, type: 'image'|'video', src: string, size?: number}>}} */
+    const data = await resp.json();
+    const files = Array.isArray(data.files) ? data.files : [];
+
+    if (files.length === 0) {
+      grid.innerHTML = `
+        <div style="grid-column: 1/-1; text-align: center; padding: 60px 20px; color: #666;">
+          <div style="font-size: 48px; margin-bottom: 20px;">📁</div>
+          <h3 style="color: #999; margin-bottom: 10px;">No files found</h3>
+          <p>Add images or videos to the "${folder}" folder</p>
+        </div>`;
+      setPreviewCta(false);
+      return;
+    }
+
+    renderMediaGrid(grid, files);
+    setPreviewCta(false);
+  } catch (err) {
+    grid.innerHTML = `
+      <div style="grid-column: 1/-1; text-align: center; padding: 60px 20px; color: #666;">
+        <div style="font-size: 48px; margin-bottom: 20px;">⚠️</div>
+        <h3 style="color: #bbb; margin-bottom: 10px;">Can’t read folder files</h3>
+        <p style="max-width: 680px; margin: 0 auto; line-height: 1.7;">
+          Browsers can’t list local folders from a plain <strong>file://</strong> page.
+          Start the included local server, then open the site at <strong>${location.origin}</strong>.
+        </p>
+        <p style="font-size: 13px; margin-top: 12px; color: #777;">Command: <strong>node server.js</strong></p>
+      </div>`;
+    setPreviewCta(false);
+  }
+}
+
+function renderMediaGrid(grid, items) {
+  grid.innerHTML = '';
+
+  items.forEach((item, idx) => {
+    const div = document.createElement('div');
+    div.className = `media-item ${item.type === 'video' ? 'video-item' : ''}`;
+
+    if (item.type === 'video') {
+      div.innerHTML = `
+        <div class="media-thumb-wrapper">
+          <video class="media-thumb" src="${item.src}" preload="metadata" muted></video>
+          <div class="play-icon"></div>
+        </div>
+        <div class="media-info">
+          <div class="name">${item.name}</div>
+          <div class="meta">Video ${item.size ? '• ' + formatFileSize(item.size) : ''}</div>
+        </div>`;
+    } else {
+      div.innerHTML = `
+        <img class="media-thumb" src="${item.src}" alt="${item.name}" loading="lazy">
+        <div class="media-info">
+          <div class="name">${item.name}</div>
+          <div class="meta">Image ${item.size ? '• ' + formatFileSize(item.size) : ''}</div>
+        </div>`;
+    }
+
+    // Click to open lightbox
+    div.addEventListener('click', () => openLightbox(item));
+    grid.appendChild(div);
+  });
+}
+
+function formatFileSize(bytes) {
+  if (!bytes || bytes === 'Unknown') return '';
+  const size = parseInt(bytes);
+  if (size < 1024) return size + 'B';
+  if (size < 1024 * 1024) return Math.round(size / 1024) + 'KB';
+  return Math.round(size / (1024 * 1024)) + 'MB';
+}
+
+// ===== LIGHTBOX =====
+function openLightbox(item) {
+  if (!item.src) return;
+  
+  let lightbox = document.getElementById('lightbox');
+  if (!lightbox) {
+    lightbox = document.createElement('div');
+    lightbox.id = 'lightbox';
+    lightbox.className = 'lightbox';
+    lightbox.innerHTML = `<button class="lightbox-close">&times;</button><div class="lightbox-content"></div>`;
+    document.body.appendChild(lightbox);
+    
+    lightbox.querySelector('.lightbox-close').addEventListener('click', () => {
+      lightbox.classList.remove('active');
+      lightbox.querySelector('.lightbox-content').innerHTML = '';
+    });
+
+    lightbox.addEventListener('click', (e) => {
+      if (e.target === lightbox) {
+        lightbox.classList.remove('active');
+        lightbox.querySelector('.lightbox-content').innerHTML = '';
+      }
+    });
+  }
+
+  const content = lightbox.querySelector('.lightbox-content');
+  if (item.type === 'video') {
+    content.innerHTML = `<video src="${item.src}" controls autoplay playsinline disablepictureinpicture controlslist="nodownload noremoteplayback" style="max-width:90%;max-height:85vh;border-radius:12px;"></video>`;
+  } else {
+    content.innerHTML = `<img src="${item.src}" style="max-width:90%;max-height:85vh;border-radius:12px;">`;
+  }
+
+  lightbox.classList.add('active');
+}
+
+// ===== INIT =====
+document.addEventListener('DOMContentLoaded', () => {
+  initBackground();
+  initDisclaimer();
+  initFolderPage();
+
+  initAuthModal();
+  initProfileMenu();
+  initHomeReferralAndAuth();
+
+  // Best-effort: block right-click save/download menu on videos.
+  document.addEventListener('contextmenu', (e) => {
+    const target = e.target;
+    if (target && target.tagName === 'VIDEO') {
+      e.preventDefault();
+    }
+  });
+});
+
+// Fade out keyframe (added dynamically)
+const style = document.createElement('style');
+style.textContent = `@keyframes fadeOut { to { opacity: 0; } }`;
+document.head.appendChild(style);
+
+// ===== AUTH MODAL (ACCESS PAGE) =====
+function initAuthModal() {
+  const overlay = document.getElementById('auth-overlay');
+  if (!overlay) return;
+
+  const modal = overlay.querySelector('.auth-modal');
+  const closeBtn = overlay.querySelector('.auth-close');
+  const messageEl = document.getElementById('auth-message');
+  const tabs = Array.from(overlay.querySelectorAll('[data-auth-tab]'));
+  const panes = Array.from(overlay.querySelectorAll('[data-auth-pane]'));
+  const loginForm = document.getElementById('auth-login');
+  const signupForm = document.getElementById('auth-signup');
+  const socialBtns = Array.from(overlay.querySelectorAll('[data-social]'));
+
+  function setMessage(text, kind) {
+    if (!messageEl) return;
+    messageEl.textContent = text || '';
+    messageEl.classList.remove('error', 'success');
+    if (kind) messageEl.classList.add(kind);
+  }
+
+  function openModal() {
+    overlay.classList.add('active');
+    overlay.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    setMessage('', null);
+    // focus first input
+    const first = overlay.querySelector('input');
+    if (first) first.focus();
+  }
+
+  function closeModal() {
+    overlay.classList.remove('active');
+    overlay.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    setMessage('', null);
+  }
+
+  function setTab(tabName) {
+    tabs.forEach((t) => {
+      const isActive = t.getAttribute('data-auth-tab') === tabName;
+      t.classList.toggle('active', isActive);
+      t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    panes.forEach((p) => {
+      const isActive = p.getAttribute('data-auth-pane') === tabName;
+      p.classList.toggle('hidden', !isActive);
+    });
+    setMessage('', null);
+  }
+
+  // Open modal when clicking tier cards
+  document.querySelectorAll('[data-auth-open]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setTab('login');
+      openModal();
+    });
+  });
+
+  // Close behaviors
+  if (closeBtn) closeBtn.addEventListener('click', closeModal);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay.classList.contains('active')) {
+      closeModal();
+    }
+  });
+
+  // Tabs
+  tabs.forEach((t) => {
+    t.addEventListener('click', () => setTab(t.getAttribute('data-auth-tab')));
+  });
+
+  // Social buttons (server-backed if configured)
+  socialBtns.forEach((b) => {
+    b.addEventListener('click', async () => {
+      const provider = String(b.getAttribute('data-social') || '').toLowerCase();
+      if (provider === 'discord') {
+        window.location.href = '/auth/discord';
+        return;
+      }
+      if (provider === 'telegram') {
+        window.location.href = '/auth/telegram';
+        return;
+      }
+      setMessage('Unknown provider.', 'error');
+    });
+  });
+
+  if (loginForm) {
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      setMessage('Checking…', null);
+      const fd = new FormData(loginForm);
+      const username = String(fd.get('username') || '').trim();
+      const password = String(fd.get('password') || '');
+
+      try {
+        const resp = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (!resp.ok) {
+          setMessage('Invalid username or password.', 'error');
+          return;
+        }
+        setMessage('Logged in. Redirecting…', 'success');
+        sessionStorage.setItem('tbw_show_ref_tutorial', '1');
+        setTimeout(() => {
+          location.href = '/index.html?welcome=1';
+        }, 250);
+      } catch {
+        setMessage('Login failed. Try again.', 'error');
+      }
+    });
+  }
+
+  if (signupForm) {
+    signupForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      setMessage('Creating account…', null);
+      const fd = new FormData(signupForm);
+      const username = String(fd.get('username') || '').trim();
+      const password = String(fd.get('password') || '');
+      const password2 = String(fd.get('password2') || '');
+
+      if (password !== password2) {
+        setMessage('Passwords do not match.', 'error');
+        return;
+      }
+
+      try {
+        const resp = await fetch('/api/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (resp.status === 409) {
+          setMessage('Username already exists.', 'error');
+          return;
+        }
+        if (!resp.ok) {
+          setMessage('Sign up failed. Try again.', 'error');
+          return;
+        }
+
+        // Auto-login after signup
+        const loginResp = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (!loginResp.ok) {
+          setMessage('Account created. Now login.', 'success');
+          setTab('login');
+          return;
+        }
+        setMessage('Account created. Redirecting…', 'success');
+        sessionStorage.setItem('tbw_show_ref_tutorial', '1');
+        setTimeout(() => {
+          location.href = '/index.html?welcome=1';
+        }, 250);
+      } catch {
+        setMessage('Sign up failed. Try again.', 'error');
+      }
+    });
+  }
+
+  // Prevent form submit on Enter inside modal from bubbling weirdly
+  if (modal) {
+    modal.addEventListener('submit', (e) => e.stopPropagation());
+  }
+}
+
+// ===== HOME: REFERRAL + AUTH FLOW =====
+function initHomeReferralAndAuth() {
+  const referralFooter = document.getElementById('referral-footer');
+  const goalCountEl = document.getElementById('referral-goal-count');
+  const barFillEl = document.getElementById('referral-bar-fill');
+  const tutorialBtn = document.getElementById('referral-tutorial');
+  const homeLoginBtn = document.getElementById('home-login');
+
+  const refOverlay = document.getElementById('referral-overlay');
+  const refClose = document.getElementById('referral-close');
+  const refHelloName = document.getElementById('referral-hello-name');
+  const refLinkInput = document.getElementById('referral-link');
+  const refCopyBtn = document.getElementById('referral-copy');
+  const refCopiedEl = document.getElementById('referral-copied');
+
+  const authOverlay = document.getElementById('auth-overlay');
+
+  // Not on home page.
+  if (!referralFooter && !refOverlay && !homeLoginBtn) return;
+
+  // Default: never show referral UI until we confirm auth.
+  if (referralFooter) referralFooter.hidden = true;
+
+  function setOverlayOpen(isOpen) {
+    if (!refOverlay) return;
+    refOverlay.classList.toggle('active', isOpen);
+    refOverlay.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+    document.body.style.overflow = isOpen ? 'hidden' : '';
+    if (!isOpen && refCopiedEl) refCopiedEl.textContent = '';
+  }
+
+  function openAuthModal(tab) {
+    if (!authOverlay) return;
+    const tabBtn = authOverlay.querySelector(`[data-auth-tab="${tab}"]`);
+    if (tabBtn) tabBtn.click();
+    authOverlay.classList.add('active');
+    authOverlay.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    const first = authOverlay.querySelector('input');
+    if (first) first.focus();
+  }
+
+  function normalizePath(pathname) {
+    if (!pathname) return '';
+    // handle Windows-ish or trailing slashes
+    return pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+  }
+
+  async function fetchMe() {
+    try {
+      const resp = await fetch('/api/me', { cache: 'no-store' });
+      if (!resp.ok) return { authed: false };
+      return await resp.json();
+    } catch {
+      return { authed: false };
+    }
+  }
+
+  async function refreshReferralUi() {
+    if (!referralFooter) return;
+
+    const me = await fetchMe();
+    const authed = !!(me && me.authed);
+    if (!authed) {
+      referralFooter.hidden = true;
+      if (homeLoginBtn) homeLoginBtn.hidden = false;
+      return;
+    }
+    if (homeLoginBtn) homeLoginBtn.hidden = true;
+    referralFooter.hidden = false;
+    if (refHelloName) refHelloName.textContent = String(me.username || 'USER').toUpperCase();
+
+    try {
+      const resp = await fetch('/api/referral/status', { cache: 'no-store' });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (refLinkInput && data && data.url) refLinkInput.value = String(data.url);
+
+      const count = Number(data.count || 0);
+      const goal = Number(data.goal || 1);
+      const pct = goal > 0 ? Math.max(0, Math.min(100, Math.round((count / goal) * 100))) : 0;
+      if (goalCountEl) goalCountEl.textContent = `${count}/${goal}`;
+      if (barFillEl) barFillEl.style.width = `${pct}%`;
+
+      // Also update profile tier if present
+      const profileTier = document.getElementById('profile-tier');
+      if (profileTier && data && data.tierLabel) profileTier.textContent = String(data.tierLabel);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function copyText(text) {
+    const value = String(text || '');
+    if (!value) return false;
+
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      // Fallback
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  // Bind tutorial popup open/close
+  if (tutorialBtn) {
+    tutorialBtn.addEventListener('click', () => {
+      setOverlayOpen(true);
+    });
+  }
+  if (refClose) refClose.addEventListener('click', () => setOverlayOpen(false));
+  if (refOverlay) {
+    refOverlay.addEventListener('click', (e) => {
+      if (e.target === refOverlay) setOverlayOpen(false);
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setOverlayOpen(false);
+  });
+
+  if (refCopyBtn) {
+    refCopyBtn.addEventListener('click', async () => {
+      const value = refLinkInput ? refLinkInput.value : '';
+      const ok = await copyText(value);
+      if (refCopiedEl) refCopiedEl.textContent = ok ? 'Copied.' : 'Copy failed.';
+      if (ok) setTimeout(() => {
+        if (refCopiedEl) refCopiedEl.textContent = '';
+      }, 1200);
+    });
+  }
+
+  // Home login button
+  if (homeLoginBtn) {
+    homeLoginBtn.addEventListener('click', () => openAuthModal('login'));
+  }
+
+  // Query-driven behaviors
+  (async () => {
+    const params = new URLSearchParams(location.search);
+    const wantsLogin = params.get('login') === '1';
+    const welcome = params.get('welcome') === '1';
+    const ref = params.get('ref');
+
+    const me = await fetchMe();
+    const authed = !!(me && me.authed);
+
+    // If arriving from a referral link and not authed, push user into signup.
+    if (ref && !authed) {
+      sessionStorage.setItem('tbw_has_ref', '1');
+      openAuthModal('signup');
+    } else if (wantsLogin && !authed) {
+      openAuthModal('login');
+    }
+
+    // Auto-open tutorial after login redirect.
+    const shouldShow = sessionStorage.getItem('tbw_show_ref_tutorial') === '1' || welcome;
+    if (authed && shouldShow) {
+      sessionStorage.removeItem('tbw_show_ref_tutorial');
+      setOverlayOpen(true);
+    }
+
+    // Clean URL params to keep it neat.
+    if (location.search) {
+      const cleaned = normalizePath(location.pathname) || '/index.html';
+      history.replaceState(null, '', cleaned);
+    }
+  })();
+
+  // Initial paint
+  refreshReferralUi();
+}
+
+// ===== PROFILE MENU (TOP RIGHT) =====
+function initProfileMenu() {
+  const root = document.getElementById('profile');
+  if (!root) return;
+
+  const btn = document.getElementById('profile-btn');
+  const dropdown = document.getElementById('profile-dropdown');
+  const usernameEl = document.getElementById('profile-username');
+  const avatarEl = document.getElementById('profile-avatar');
+  const logoutBtn = document.getElementById('profile-logout');
+
+  if (!btn || !dropdown || !usernameEl || !logoutBtn || !avatarEl) return;
+
+  let authedUsername = null;
+
+  function setOpen(isOpen) {
+    dropdown.classList.toggle('active', isOpen);
+    btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  }
+
+  function initialsFor(name) {
+    const s = String(name || '').trim();
+    if (!s) return 'U';
+    const parts = s.split(/\s+/).filter(Boolean);
+    const first = parts[0] ? parts[0][0] : s[0];
+    const second = parts.length > 1 ? parts[1][0] : (s.length > 1 ? s[1] : '');
+    return (first + second).toUpperCase();
+  }
+
+  async function refreshMe() {
+    try {
+      const resp = await fetch('/api/me', { cache: 'no-store' });
+      if (!resp.ok) {
+        root.hidden = true;
+        return;
+      }
+      const data = await resp.json();
+      if (!data || !data.authed) {
+        root.hidden = true;
+        return;
+      }
+      authedUsername = String(data.username || 'User');
+      usernameEl.textContent = authedUsername;
+      const tierEl = document.getElementById('profile-tier');
+      if (tierEl) tierEl.textContent = String(data.tierLabel || 'NO TIER');
+      avatarEl.textContent = initialsFor(authedUsername);
+      root.hidden = false;
+    } catch {
+      root.hidden = true;
+    }
+  }
+
+  btn.addEventListener('click', () => {
+    if (root.hidden) return;
+    const open = dropdown.classList.contains('active');
+    setOpen(!open);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (root.hidden) return;
+    if (!root.contains(e.target)) setOpen(false);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setOpen(false);
+  });
+
+  logoutBtn.addEventListener('click', async () => {
+    try {
+      await fetch('/api/logout', { method: 'POST' });
+    } finally {
+      setOpen(false);
+      root.hidden = true;
+      // If user is on a locked page, send them home.
+      if (location.pathname.endsWith('/folder.html') || location.pathname.endsWith('/access.html')) {
+        location.href = '/index.html';
+      } else {
+        location.reload();
+      }
+    }
+  });
+
+  // initial load
+  refreshMe();
+}

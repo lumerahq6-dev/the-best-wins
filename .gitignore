@@ -1,0 +1,26 @@
+# Secrets / local config
+.env
+.env.*
+
+# Runtime / logs
+*.log
+server.out.log
+server.err.log
+cookies.txt
+
+# Local user DB (contains hashed credentials, referral data)
+data/
+
+# Media folders (keep private / large files)
+Streamer Wins/
+Points Game/
+Dick Reactions/
+Tit Flashing/
+Ass Flashing/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/

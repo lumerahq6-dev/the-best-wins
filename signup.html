@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign Up — The Best Wins</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- Profile (shows only when logged in) -->
+  <div class="profile" id="profile" hidden>
+    <button class="profile-btn" id="profile-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+      <span class="profile-avatar" id="profile-avatar">U</span>
+      <span class="profile-caret">▾</span>
+    </button>
+    <div class="profile-dropdown" id="profile-dropdown" role="menu" aria-label="Profile menu">
+      <div class="profile-username" id="profile-username">User</div>
+      <div class="profile-tier" id="profile-tier">NO TIER</div>
+      <button class="profile-logout" id="profile-logout" type="button">Logout</button>
+    </div>
+  </div>
+
+  <div class="page-content access-page">
+    <a href="index.html" class="back-btn">← Back</a>
+
+    <div class="access-header" style="margin-top:10px;">
+      <h1>Create Account</h1>
+      <p>Sign up with username &amp; password</p>
+    </div>
+
+    <div class="auth-page" style="max-width:520px;margin:0 auto;">
+      <div class="auth-message" id="auth-message" aria-live="polite"></div>
+
+      <form class="auth-form" id="auth-signup">
+        <label>
+          <span>Username</span>
+          <input name="username" autocomplete="username" required minlength="3" />
+        </label>
+        <label>
+          <span>Password</span>
+          <input name="password" type="password" autocomplete="new-password" required minlength="6" />
+        </label>
+        <label>
+          <span>Confirm Password</span>
+          <input name="password2" type="password" autocomplete="new-password" required minlength="6" />
+        </label>
+        <button class="auth-primary" type="submit">Create Account</button>
+      </form>
+
+      <div class="auth-divider"><span>Or Sign Up / In With…</span></div>
+      <div class="auth-social">
+        <button class="social-btn discord" type="button" data-social="discord">Discord</button>
+        <button class="social-btn telegram" type="button" data-social="telegram">Telegram</button>
+      </div>
+
+      <div style="margin-top:14px;color:#777;font-size:13px;">
+        Already have an account? <a href="login.html" style="color:#c084fc;text-decoration:none;">Login</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+  <script>
+    (function () {
+      const messageEl = document.getElementById('auth-message');
+      const signupForm = document.getElementById('auth-signup');
+      const socials = Array.from(document.querySelectorAll('[data-social]'));
+
+      function setMessage(text, kind) {
+        messageEl.textContent = text || '';
+        messageEl.classList.remove('error', 'success');
+        if (kind) messageEl.classList.add(kind);
+      }
+
+      socials.forEach((b) => b.addEventListener('click', () => {
+        const provider = String(b.getAttribute('data-social') || '').toLowerCase();
+        if (provider === 'discord') return location.href = '/auth/discord';
+        if (provider === 'telegram') return location.href = '/auth/telegram';
+        setMessage('Unknown provider.', 'error');
+      }));
+
+      signupForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        setMessage('Creating account…');
+        const fd = new FormData(signupForm);
+        const username = String(fd.get('username') || '').trim();
+        const password = String(fd.get('password') || '');
+        const password2 = String(fd.get('password2') || '');
+        if (password !== password2) return setMessage('Passwords do not match.', 'error');
+
+        try {
+          const resp = await fetch('/api/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+          if (resp.status === 409) return setMessage('Username already exists.', 'error');
+          if (!resp.ok) return setMessage('Sign up failed. Try again.', 'error');
+
+          const loginResp = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+          if (!loginResp.ok) {
+            setMessage('Account created. Now login.', 'success');
+            return setTimeout(() => location.href = 'login.html', 500);
+          }
+          setMessage('Account created.', 'success');
+          sessionStorage.setItem('tbw_show_ref_tutorial', '1');
+          setTimeout(() => location.href = 'index.html?welcome=1', 250);
+        } catch {
+          setMessage('Sign up failed. Try again.', 'error');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

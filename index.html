@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Best Wins</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- Profile (shows only when logged in) -->
+  <div class="profile" id="profile" hidden>
+    <button class="profile-btn" id="profile-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+      <span class="profile-avatar" id="profile-avatar">U</span>
+      <span class="profile-caret">▾</span>
+    </button>
+    <div class="profile-dropdown" id="profile-dropdown" role="menu" aria-label="Profile menu">
+      <div class="profile-username" id="profile-username">User</div>
+      <div class="profile-tier" id="profile-tier">NO TIER</div>
+      <button class="profile-logout" id="profile-logout" type="button">Logout</button>
+    </div>
+  </div>
+
+  <!-- Home Login / Sign Up (shows only when logged out) -->
+  <button class="home-login-btn" id="home-login" type="button" hidden>Login / Sign Up</button>
+
+  <!-- ===== AGE DISCLAIMER OVERLAY ===== -->
+  <div class="disclaimer-overlay" id="disclaimer-overlay">
+    <div class="disclaimer-box">
+      <h1>⚠ Age Verification Required</h1>
+      <p class="subtitle">You must verify your age before proceeding</p>
+
+      <div class="divider"></div>
+
+      <span class="warning-badge">18+ Content Warning</span>
+
+      <p>
+        <strong>This website contains adult content</strong> intended exclusively for individuals
+        who are <strong>at least 18 years of age</strong>. All individuals depicted in any content
+        are confirmed to be <strong>18+ years old</strong>.
+      </p>
+
+      <p>
+        By clicking "I Accept &amp; Enter" below, you confirm:
+      </p>
+
+      <ul>
+        <li>You are at least <strong>18 years old</strong></li>
+        <li>You understand this site contains <strong>explicit adult content</strong></li>
+        <li>Accessing this content is <strong>legal in your jurisdiction</strong></li>
+        <li>You will not share content with minors</li>
+      </ul>
+
+      <div class="divider"></div>
+
+      <p>
+        <strong>If you are under 18 or do not agree to these terms, you must leave immediately.</strong>
+      </p>
+
+      <button class="btn-accept" id="accept-btn">I Accept &amp; Enter — I Am 18+</button>
+    </div>
+  </div>
+
+  <!-- ===== HOMEPAGE ===== -->
+  <div class="page-content homepage blurred" id="homepage">
+    <div class="site-header">
+      <h1>The Best Wins</h1>
+      <p>Select a Collection</p>
+    </div>
+
+    <div class="folder-grid">
+      <a href="folder.html?folder=Streamer Wins" class="folder-card">
+        <span class="folder-icon">🏆</span>
+        <h3>Streamer Wins</h3>
+        <div class="file-count">Browse Collection</div>
+      </a>
+
+      <a href="folder.html?folder=Points Game" class="folder-card">
+        <span class="folder-icon">🎯</span>
+        <h3>Points Game</h3>
+        <div class="file-count">Browse Collection</div>
+      </a>
+
+      <a href="folder.html?folder=Dick Reactions" class="folder-card">
+        <span class="folder-icon">😱</span>
+        <h3>Dick Reactions</h3>
+        <div class="file-count">Browse Collection</div>
+      </a>
+
+      <a href="folder.html?folder=Tit Flashing" class="folder-card">
+        <span class="folder-icon">🍒</span>
+        <h3>Tit Flashing</h3>
+        <div class="file-count">Browse Collection</div>
+      </a>
+
+      <a href="folder.html?folder=Ass Flashing" class="folder-card">
+        <span class="folder-icon">🍑</span>
+        <h3>Ass Flashing</h3>
+        <div class="file-count">Browse Collection</div>
+      </a>
+    </div>
+
+    <!-- Referral footer (only when logged in) -->
+    <div class="referral-footer" id="referral-footer" hidden>
+      <div class="referral-goal">
+        <div class="referral-goal-top">
+          <div class="referral-goal-title">Referral Signup Goal:</div>
+          <div class="referral-goal-count" id="referral-goal-count">0/1</div>
+        </div>
+        <div class="referral-bar">
+          <div class="referral-bar-fill" id="referral-bar-fill" style="width:0%"></div>
+        </div>
+      </div>
+      <button class="referral-tutorial" id="referral-tutorial" type="button">Access Tutorial</button>
+    </div>
+  </div>
+
+  <!-- Auth Modal Popup (Home) -->
+  <div class="auth-overlay" id="auth-overlay" aria-hidden="true">
+    <div class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <button class="auth-close" type="button" aria-label="Close">&times;</button>
+
+      <h2 id="auth-title">Create Account</h2>
+      <p class="auth-subtitle">Log in with username &amp; password</p>
+
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" type="button" data-auth-tab="login" role="tab" aria-selected="true">Login</button>
+        <button class="auth-tab" type="button" data-auth-tab="signup" role="tab" aria-selected="false">Sign Up</button>
+      </div>
+
+      <div class="auth-message" id="auth-message" aria-live="polite"></div>
+
+      <form class="auth-form" id="auth-login" data-auth-pane="login">
+        <label>
+          <span>Username</span>
+          <input name="username" autocomplete="username" required minlength="3" />
+        </label>
+        <label>
+          <span>Password</span>
+          <input name="password" type="password" autocomplete="current-password" required minlength="6" />
+        </label>
+        <button class="auth-primary" type="submit">Login</button>
+      </form>
+
+      <form class="auth-form hidden" id="auth-signup" data-auth-pane="signup">
+        <label>
+          <span>Username</span>
+          <input name="username" autocomplete="username" required minlength="3" />
+        </label>
+        <label>
+          <span>Password</span>
+          <input name="password" type="password" autocomplete="new-password" required minlength="6" />
+        </label>
+        <label>
+          <span>Confirm Password</span>
+          <input name="password2" type="password" autocomplete="new-password" required minlength="6" />
+        </label>
+        <button class="auth-primary" type="submit">Create Account</button>
+      </form>
+
+      <div class="auth-divider">
+        <span>Or Sign Up / In With…</span>
+      </div>
+
+      <div class="auth-social">
+        <button class="social-btn discord" type="button" data-social="discord" aria-label="Discord">
+          <span class="social-icon">Discord</span>
+        </button>
+        <button class="social-btn telegram" type="button" data-social="telegram" aria-label="Telegram">
+          <span class="social-icon">Telegram</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Referral Tutorial Popup -->
+  <div class="referral-overlay" id="referral-overlay" aria-hidden="true">
+    <div class="referral-modal" role="dialog" aria-modal="true" aria-labelledby="referral-title">
+      <button class="referral-close" id="referral-close" type="button" aria-label="Close">&times;</button>
+
+      <h2 id="referral-title">Hello, <span id="referral-hello-name">USER</span>.</h2>
+      <p class="referral-sub">You will unlock free access in just a few moments. Here's how:</p>
+
+      <p class="referral-sub">We have created a referral link for you.</p>
+
+      <p class="referral-body">When people create an account with your referral link, you will get access to higher tiers.</p>
+
+      <p class="referral-body">
+        Post your link in <a class="referral-reddit" href="https://www.reddit.com/r/SurprisedByCock/" target="_blank" rel="noopener noreferrer">This Reddit</a> under posts and replies.
+      </p>
+
+      <p class="referral-body">You can also invite your friends from telegram or discord.</p>
+
+      <div class="referral-linkbox">
+        <div class="referral-linklabel">Here's your referral link:</div>
+        <div class="referral-linkrow">
+          <input id="referral-link" class="referral-link" readonly value="http://localhost:3002/XXXXXXX" />
+          <button class="referral-copy" id="referral-copy" type="button">Copy</button>
+        </div>
+        <div class="referral-tierhint">
+          <div class="hint-line">TIER 1 = 1 SIGNUP</div>
+          <div class="hint-line">TIER 2 = 3 SIGNUPS</div>
+        </div>
+        <div class="referral-copied" id="referral-copied" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

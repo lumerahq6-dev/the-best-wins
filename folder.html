@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Best Wins — Collection</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- Profile (shows only when logged in) -->
+  <div class="profile" id="profile" hidden>
+    <button class="profile-btn" id="profile-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+      <span class="profile-avatar" id="profile-avatar">U</span>
+      <span class="profile-caret">▾</span>
+    </button>
+    <div class="profile-dropdown" id="profile-dropdown" role="menu" aria-label="Profile menu">
+      <div class="profile-username" id="profile-username">User</div>
+      <div class="profile-tier" id="profile-tier">NO TIER</div>
+      <button class="profile-logout" id="profile-logout" type="button">Logout</button>
+    </div>
+  </div>
+
+  <div class="page-content folder-page">
+    <!-- Breadcrumb -->
+    <div class="breadcrumb">
+      <a href="index.html">🏠 Home</a>
+      <span>›</span>
+      <span class="current">Loading...</span>
+    </div>
+
+    <h1>Loading...</h1>
+
+    <!-- Media Grid (populated by JS) -->
+    <div class="media-grid"></div>
+
+    <!-- Preview CTA (shown only in preview mode) -->
+    <div class="cta-banner" id="preview-cta" hidden>
+      <a href="/index.html?login=1">Get Free Access To 3k+ Videos</a>
+    </div>
+  </div>
+
+  <!-- Lightbox container added by JS -->
+
+  <script src="script.js"></script>
+</body>
+</html>
