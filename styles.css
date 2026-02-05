@@ -328,7 +328,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 34px;
+  gap: 26px;
 }
 
 /* ===== REFERRAL FOOTER (HOME) ===== */
@@ -589,8 +589,8 @@ body {
   background: linear-gradient(160deg, #16162a, #1c1c35);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 16px;
-  width: 340px;
-  padding: 56px 28px;
+  width: 310px;
+  padding: 46px 24px;
   text-align: center;
   cursor: pointer;
   transition: all 0.35s ease;
@@ -623,20 +623,20 @@ body {
 }
 
 .folder-icon {
-  font-size: 72px;
-  margin-bottom: 22px;
+  font-size: 62px;
+  margin-bottom: 18px;
   display: block;
 }
 
 .folder-card h3 {
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 700;
   color: #e0e0e0;
   letter-spacing: 0.5px;
 }
 
 .folder-card .file-count {
-  font-size: 14px;
+  font-size: 13px;
   color: #666;
   margin-top: 12px;
 }
