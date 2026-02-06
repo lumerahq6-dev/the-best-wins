@@ -199,6 +199,108 @@ function r2PresignedUrl(objectKey, expiry = R2_PRESIGN_SECONDS) {
   return `${endpointUrl.protocol}//${host}${canonicalUri}?${sortedQs}&X-Amz-Signature=${signature}`;
 }
 
+// ── R2 data persistence helpers (GET / PUT small objects like users.json) ────
+
+/**
+ * Build an S3v4-signed request to R2 and execute it.
+ * Returns a Promise that resolves to { status, headers, body: Buffer }.
+ */
+function r2Request(method, objectKey, bodyBuf, extraHeaders) {
+  return new Promise((resolve, reject) => {
+    const now = new Date();
+    const datestamp = now.toISOString().replace(/[-:]/g, '').slice(0, 8);
+    const amzDate = datestamp + 'T' + now.toISOString().replace(/[-:]/g, '').slice(9, 15) + 'Z';
+    const region = 'auto';
+    const service = 's3';
+    const credScope = `${datestamp}/${region}/${service}/aws4_request`;
+
+    const endpointUrl = new URL(R2_ENDPOINT);
+    const host = endpointUrl.host;
+    const encodedKey = objectKey.split('/').map(s => encodeURIComponent(s)).join('/');
+    const canonicalUri = `/${R2_BUCKET}/${encodedKey}`;
+
+    const payloadHash = bodyBuf ? sha256Hex(bodyBuf) : sha256Hex('');
+
+    const hdrs = Object.assign({}, extraHeaders || {});
+    hdrs['host'] = host;
+    hdrs['x-amz-content-sha256'] = payloadHash;
+    hdrs['x-amz-date'] = amzDate;
+    if (bodyBuf) hdrs['content-length'] = String(bodyBuf.length);
+
+    const signedHeaderKeys = Object.keys(hdrs).map(k => k.toLowerCase()).sort();
+    const signedHeaders = signedHeaderKeys.join(';');
+    const canonicalHeaders = signedHeaderKeys.map(k => `${k}:${hdrs[k]}\n`).join('');
+
+    const canonicalRequest = [
+      method,
+      canonicalUri,
+      '',              // no query string
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      credScope,
+      sha256Hex(canonicalRequest),
+    ].join('\n');
+
+    let signingKey = hmacSha256('AWS4' + R2_SECRET_KEY, datestamp);
+    signingKey = hmacSha256(signingKey, region);
+    signingKey = hmacSha256(signingKey, service);
+    signingKey = hmacSha256(signingKey, 'aws4_request');
+    const signature = hmacSha256(signingKey, stringToSign).toString('hex');
+
+    const authHeader = `AWS4-HMAC-SHA256 Credential=${R2_ACCESS_KEY}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    const outHeaders = {};
+    for (const k of Object.keys(hdrs)) outHeaders[k] = hdrs[k];
+    outHeaders['Authorization'] = authHeader;
+
+    const reqOptions = {
+      hostname: host,
+      port: 443,
+      path: canonicalUri,
+      method,
+      headers: outHeaders,
+    };
+
+    const httpReq = https.request(reqOptions, (httpRes) => {
+      const chunks = [];
+      httpRes.on('data', (c) => chunks.push(c));
+      httpRes.on('end', () => {
+        resolve({ status: httpRes.statusCode || 0, headers: httpRes.headers, body: Buffer.concat(chunks) });
+      });
+    });
+    httpReq.on('error', reject);
+    if (bodyBuf) httpReq.write(bodyBuf);
+    httpReq.end();
+  });
+}
+
+/**
+ * GET an object from R2.  Returns the body as a UTF-8 string, or null if 404.
+ */
+async function r2GetObject(objectKey) {
+  const resp = await r2Request('GET', objectKey, null, {});
+  if (resp.status === 404 || resp.status === 403) return null;
+  if (resp.status !== 200) throw new Error(`R2 GET ${objectKey} → ${resp.status}`);
+  return resp.body.toString('utf8');
+}
+
+/**
+ * PUT an object to R2.
+ */
+async function r2PutObject(objectKey, content, contentType) {
+  const buf = Buffer.from(content, 'utf8');
+  const resp = await r2Request('PUT', objectKey, buf, { 'content-type': contentType || 'application/octet-stream' });
+  if (resp.status < 200 || resp.status >= 300) {
+    throw new Error(`R2 PUT ${objectKey} → ${resp.status}: ${resp.body.toString('utf8').slice(0, 200)}`);
+  }
+}
+
 /**
  * List objects in an R2 bucket under a given prefix using the S3 ListObjectsV2 API.
  * Returns an array of object keys (strings).
@@ -608,10 +710,15 @@ function referralGoalFromCount(count) {
 async function readMegaLinks() {
   let raw;
   try {
-    raw = await fs.promises.readFile(MEGA_FILE, 'utf8');
+    if (R2_ENABLED) {
+      raw = await r2GetObject('data/mega.txt');
+    } else {
+      raw = await fs.promises.readFile(MEGA_FILE, 'utf8');
+    }
   } catch {
     return { tier1: null, tier2: null };
   }
+  if (!raw) return { tier1: null, tier2: null };
 
   const out = { tier1: null, tier2: null };
   raw.split(/\r?\n/).forEach((line) => {
@@ -722,15 +829,20 @@ async function ensureUsersDb() {
 }
 
 async function ensureUsersDbFresh() {
-  // "Live connection": always re-read the file so manual edits/deletes apply immediately.
-  // If the file is deleted or invalid, treat it as empty.
-  await fs.promises.mkdir(DATA_DIR, { recursive: true });
-
   // Avoid reloading mid-write.
   await usersDbWritePromise.catch(() => {});
 
   try {
-    const raw = await fs.promises.readFile(USERS_FILE, 'utf8');
+    let raw;
+    if (R2_ENABLED) {
+      // Read from R2
+      raw = await r2GetObject('data/users.json');
+    } else {
+      // Read from local disk
+      await fs.promises.mkdir(DATA_DIR, { recursive: true });
+      raw = await fs.promises.readFile(USERS_FILE, 'utf8');
+    }
+    if (!raw) throw new Error('empty');
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') throw new Error('bad');
     if (!parsed.users || typeof parsed.users !== 'object') parsed.users = {};
@@ -745,12 +857,18 @@ async function ensureUsersDbFresh() {
 async function queueUsersDbWrite() {
   const snapshot = JSON.stringify(usersDb, null, 2);
   usersDbWritePromise = usersDbWritePromise.then(async () => {
-    await fs.promises.mkdir(DATA_DIR, { recursive: true });
-    const tmp = `${USERS_FILE}.tmp`;
-    await fs.promises.writeFile(tmp, snapshot);
-    await fs.promises.rename(tmp, USERS_FILE);
-  }).catch(() => {
-    // swallow write errors to avoid crashing server; auth calls will fail gracefully
+    if (R2_ENABLED) {
+      // Write to R2
+      await r2PutObject('data/users.json', snapshot, 'application/json');
+    } else {
+      // Write to local disk
+      await fs.promises.mkdir(DATA_DIR, { recursive: true });
+      const tmp = `${USERS_FILE}.tmp`;
+      await fs.promises.writeFile(tmp, snapshot);
+      await fs.promises.rename(tmp, USERS_FILE);
+    }
+  }).catch((e) => {
+    console.error('usersDb write error:', e && e.message ? e.message : e);
   });
   return usersDbWritePromise;
 }
