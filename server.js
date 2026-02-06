@@ -62,19 +62,17 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 3002;
 // Otherwise default to localhost for local dev safety.
 const HOST = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
 
-// Repo root (static assets live here). We intentionally keep static serving locked to this directory.
-const REPO_ROOT = __dirname;
+function resolveEnvPath(envVal, baseDir) {
+  const raw = String(envVal || '').trim();
+  if (!raw) return null;
+  return path.isAbsolute(raw) ? raw : path.resolve(baseDir, raw);
+}
 
-// Optional: store user DB / mega config on a persistent volume (recommended for hosting).
-const DATA_DIR = process.env.TBW_DATA_DIR
-  ? path.resolve(String(process.env.TBW_DATA_DIR))
-  : path.join(REPO_ROOT, 'data');
-
-// Optional: store large media folders on a volume / external disk.
-// Example on Railway volume: TBW_MEDIA_ROOT=/data/media
-const MEDIA_ROOT = process.env.TBW_MEDIA_ROOT
-  ? path.resolve(String(process.env.TBW_MEDIA_ROOT))
-  : REPO_ROOT;
+// Persisted data/media roots (useful for Railway Volumes, VPS mounts, etc.)
+// - TBW_DATA_DIR: where users.json + mega.txt live
+// - TBW_MEDIA_ROOT: where the category folders live (Streamer Wins/, etc.)
+const DATA_DIR = resolveEnvPath(process.env.TBW_DATA_DIR, __dirname) || path.join(__dirname, 'data');
+const MEDIA_ROOT = resolveEnvPath(process.env.TBW_MEDIA_ROOT, __dirname) || __dirname;
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MEGA_FILE = path.join(DATA_DIR, 'mega.txt');
 
@@ -827,9 +825,9 @@ function sendFileRange(req, res, filePath, stat) {
 
 function safeFilePath(urlPathname) {
   const decoded = decodeURIComponent(urlPathname);
-  const joined = path.join(REPO_ROOT, decoded);
+  const joined = path.join(__dirname, decoded);
   const normalized = path.normalize(joined);
-  if (!normalized.startsWith(path.normalize(REPO_ROOT + path.sep))) {
+  if (!normalized.startsWith(path.normalize(__dirname + path.sep))) {
     return null;
   }
   return normalized;
