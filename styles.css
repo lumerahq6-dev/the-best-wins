@@ -19,6 +19,9 @@ body {
   top: 22px;
   right: 24px;
   z-index: 5500;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
 }
 
 .profile[hidden] {
@@ -108,15 +111,12 @@ body {
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-/* Telegram icon — sits below the profile widget, not inside the dropdown */
+/* Telegram icon — sits to the LEFT of the profile button, same height */
 .profile-telegram-external {
-  position: fixed;
-  top: 72px;
-  right: 24px;
+  position: relative;
   z-index: 5400;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
+  width: 48px;
+  border-radius: 14px;
   display: grid;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -134,8 +134,8 @@ body {
 }
 
 .profile-telegram-external svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   fill: #2AABEE;
 }
 
