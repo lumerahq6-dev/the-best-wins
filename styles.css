@@ -113,7 +113,7 @@ body {
   position: fixed;
   top: 72px;
   right: 24px;
-  z-index: 9998;
+  z-index: 5400;
   width: 40px;
   height: 40px;
   border-radius: 12px;
@@ -169,7 +169,7 @@ body {
   top: 20px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 5200;
+  z-index: 9990;
   padding: 14px 28px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.10);
@@ -205,7 +205,7 @@ body {
 .mega-overlay {
   position: fixed;
   inset: 0;
-  z-index: 6200;
+  z-index: 9995;
   display: none;
   align-items: center;
   justify-content: center;
@@ -587,7 +587,7 @@ body {
 .referral-overlay {
   position: fixed;
   inset: 0;
-  z-index: 6500;
+  z-index: 9993;
   display: none;
   align-items: center;
   justify-content: center;
@@ -1283,7 +1283,7 @@ body {
 .auth-overlay {
   position: fixed;
   inset: 0;
-  z-index: 6000;
+  z-index: 9992;
   display: none;
   align-items: center;
   justify-content: center;
@@ -1683,6 +1683,15 @@ body {
     font-size: 13px;
     padding: 10px 18px;
   }
+
+  .tier-unlocked-btn {
+    top: 72px;
+    padding: 12px 22px;
+    font-size: 13px;
+    letter-spacing: 1.2px;
+    max-width: calc(100vw - 32px);
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1702,5 +1711,12 @@ body {
     top: 12px;
     left: 12px;
     padding: 10px 16px;
+  }
+
+  .tier-unlocked-btn {
+    top: 66px;
+    padding: 10px 18px;
+    font-size: 12px;
+    letter-spacing: 1px;
   }
 }
