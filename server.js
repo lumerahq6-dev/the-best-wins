@@ -76,6 +76,13 @@ const MEDIA_ROOT = resolveEnvPath(process.env.TBW_MEDIA_ROOT, __dirname) || __di
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MEGA_FILE = path.join(DATA_DIR, 'mega.txt');
 
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch (e) {
+  // eslint-disable-next-line no-console
+  console.warn(`Warning: failed to create DATA_DIR at ${DATA_DIR}: ${e && e.message ? e.message : String(e)}`);
+}
+
 const SESSION_COOKIE = 'tbw_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 const PEPPER = process.env.TBW_PEPPER || '';
@@ -1667,6 +1674,9 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   // eslint-disable-next-line no-console
   console.log(`Server running on http://${HOST}:${PORT}`);
+
+  // eslint-disable-next-line no-console
+  console.log(`Storage roots: DATA_DIR=${DATA_DIR} MEDIA_ROOT=${MEDIA_ROOT}`);
 
   if (!PEPPER) {
     console.warn('\x1b[33m[WARN]\x1b[0m TBW_PEPPER is not set. Passwords are less secure without it. Add TBW_PEPPER=<random-string> to .env.');
