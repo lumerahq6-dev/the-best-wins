@@ -2019,9 +2019,15 @@ const server = http.createServer(async (req, res) => {
 
     // Static file serving (no directory listing)
     // (Range not required here; media is handled by /media)
-    const data = await fs.promises.readFile(filePath);
+    let data = await fs.promises.readFile(filePath);
+    const contentType = getContentType(filePath);
+    if (contentType.startsWith('text/html')) {
+      const origin = getRequestOrigin(req);
+      const html = data.toString('utf8').replace(/\{\{BASE_URL\}\}/g, origin);
+      data = Buffer.from(html, 'utf8');
+    }
     res.writeHead(200, {
-      'Content-Type': getContentType(filePath),
+      'Content-Type': contentType,
       'Content-Length': data.length,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
