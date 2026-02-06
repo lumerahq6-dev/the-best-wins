@@ -119,6 +119,7 @@ const STATIC_ALLOWLIST = new Set([
   '/access.html',
   '/premium.html',
   '/preview.png',
+  '/top_preview.png',
   '/face.png',
   '/styles.css',
   '/script.js',
@@ -2052,7 +2053,7 @@ const server = http.createServer(async (req, res) => {
 
     // Block any direct serving of image/video files via static handler (must go through /media with auth + range).
     // Exception: allow a small number of UI assets (like the premium preview image and face icon).
-    if (pathname !== '/preview.png' && pathname !== '/face.png' && isAllowedMediaFile(normalized)) {
+    if (pathname !== '/preview.png' && pathname !== '/top_preview.png' && pathname !== '/face.png' && isAllowedMediaFile(normalized)) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('Not Found');
     }
