@@ -116,6 +116,7 @@ const STATIC_ALLOWLIST = new Set([
   '/access.html',
   '/premium.html',
   '/preview.png',
+  '/face.png',
   '/styles.css',
   '/script.js',
   '/login.html',
