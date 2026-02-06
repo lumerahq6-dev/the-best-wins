@@ -662,6 +662,17 @@ function userExistsByUsername(db, username) {
   return false;
 }
 
+function userExistsBySignupIp(db, ip) {
+  if (!db || !db.users) return false;
+  const target = normalizeIp(ip);
+  if (!target || target === 'unknown') return false;
+  for (const u of Object.values(db.users)) {
+    if (!u || typeof u !== 'object') continue;
+    if (normalizeIp(u.signupIp) === target) return true;
+  }
+  return false;
+}
+
 function randomReferralCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
   let out = '';
@@ -1287,6 +1298,12 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 409, { error: 'That username is already taken' });
       }
 
+      const allowLocalDevSameIpSignup = process.env.TBW_DEV_ALLOW_SAME_IP_SIGNUPS === '1'
+        && normalizeIp(getClientIp(req)) === '127.0.0.1';
+      if (!allowLocalDevSameIpSignup && userExistsBySignupIp(db, getClientIp(req))) {
+        return sendJson(res, 409, { error: 'An account already exists from this IP.' });
+      }
+
       const salt = crypto.randomBytes(16).toString('hex');
       const hash = scryptHex(password, salt);
 
@@ -1812,6 +1829,11 @@ const server = http.createServer(async (req, res) => {
       const isNewDiscordUser = !db.users[userKey];
       if (isNewDiscordUser) {
         const discordSignupIp = normalizeIp(getClientIp(req));
+        const allowLocalDevSameIpSignup = process.env.TBW_DEV_ALLOW_SAME_IP_SIGNUPS === '1'
+          && discordSignupIp === '127.0.0.1';
+        if (!allowLocalDevSameIpSignup && userExistsBySignupIp(db, discordSignupIp)) {
+          return sendText(res, 409, 'An account already exists from this IP.');
+        }
         db.users[userKey] = {
           username: `discord:${discordName}`,
           provider: 'discord',
