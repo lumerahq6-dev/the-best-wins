@@ -848,6 +848,19 @@ async function ensureUsersDbFresh() {
     if (!parsed.users || typeof parsed.users !== 'object') parsed.users = {};
     if (!parsed.version) parsed.version = 1;
     usersDb = parsed;
+
+    // Restore persisted sessions
+    if (parsed._sessions && typeof parsed._sessions === 'object') {
+      const now = Date.now();
+      for (const [tok, sess] of Object.entries(parsed._sessions)) {
+        if (sess && sess.userKey && sess.createdAt) {
+          const ageSec = (now - sess.createdAt) / 1000;
+          if (ageSec < SESSION_TTL_SECONDS) {
+            sessions.set(tok, { userKey: sess.userKey, createdAt: sess.createdAt });
+          }
+        }
+      }
+    }
   } catch {
     usersDb = { version: 1, users: {} };
   }
@@ -855,6 +868,17 @@ async function ensureUsersDbFresh() {
 }
 
 async function queueUsersDbWrite() {
+  // Snapshot sessions into the DB so they survive restarts
+  const sessObj = {};
+  const now = Date.now();
+  for (const [tok, sess] of sessions.entries()) {
+    const ageSec = (now - sess.createdAt) / 1000;
+    if (ageSec < SESSION_TTL_SECONDS) {
+      sessObj[tok] = { userKey: sess.userKey, createdAt: sess.createdAt };
+    }
+  }
+  usersDb._sessions = sessObj;
+
   const snapshot = JSON.stringify(usersDb, null, 2);
   usersDbWritePromise = usersDbWritePromise.then(async () => {
     if (R2_ENABLED) {
