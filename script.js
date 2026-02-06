@@ -280,6 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initAuthModal();
   initProfileMenu();
   initHomeReferralAndAuth();
+  initTierMegaUnlock();
 
   // Best-effort: block right-click save/download menu on videos.
   document.addEventListener('contextmenu', (e) => {
@@ -376,10 +377,6 @@ function initAuthModal() {
       const provider = String(b.getAttribute('data-social') || '').toLowerCase();
       if (provider === 'discord') {
         window.location.href = '/auth/discord';
-        return;
-      }
-      if (provider === 'telegram') {
-        window.location.href = '/auth/telegram';
         return;
       }
       setMessage('Unknown provider.', 'error');
@@ -668,6 +665,7 @@ function initProfileMenu() {
   const usernameEl = document.getElementById('profile-username');
   const avatarEl = document.getElementById('profile-avatar');
   const logoutBtn = document.getElementById('profile-logout');
+  const telegramExt = document.getElementById('profile-telegram-ext');
 
   if (!btn || !dropdown || !usernameEl || !logoutBtn || !avatarEl) return;
 
@@ -697,6 +695,7 @@ function initProfileMenu() {
       const data = await resp.json();
       if (!data || !data.authed) {
         root.hidden = true;
+        if (telegramExt) telegramExt.hidden = true;
         return;
       }
       authedUsername = String(data.username || 'User');
@@ -705,8 +704,10 @@ function initProfileMenu() {
       if (tierEl) tierEl.textContent = String(data.tierLabel || 'NO TIER');
       avatarEl.textContent = initialsFor(authedUsername);
       root.hidden = false;
+      if (telegramExt) telegramExt.hidden = false;
     } catch {
       root.hidden = true;
+      if (telegramExt) telegramExt.hidden = true;
     }
   }
 
@@ -731,6 +732,7 @@ function initProfileMenu() {
     } finally {
       setOpen(false);
       root.hidden = true;
+      if (telegramExt) telegramExt.hidden = true;
       // If user is on a locked page, send them home.
       if (location.pathname.endsWith('/folder.html') || location.pathname.endsWith('/access.html')) {
         location.href = '/index.html';
@@ -742,4 +744,137 @@ function initProfileMenu() {
 
   // initial load
   refreshMe();
+}
+
+// ===== TIER 1+ MEGA LINK UI =====
+function initTierMegaUnlock() {
+  const btn = document.getElementById('tier-unlocked-btn');
+  const overlay = document.getElementById('mega-overlay');
+  if (!btn || !overlay) return;
+
+  const closeBtn = document.getElementById('mega-close');
+  const linkInput = document.getElementById('mega-link');
+  const copyBtn = document.getElementById('mega-copy');
+  const copiedEl = document.getElementById('mega-copied');
+
+  let currentTier = null;
+
+  function setOverlayOpen(isOpen) {
+    overlay.classList.toggle('active', isOpen);
+    overlay.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+    document.body.style.overflow = isOpen ? 'hidden' : '';
+    if (!isOpen && copiedEl) copiedEl.textContent = '';
+  }
+
+  async function copyText(text) {
+    const value = String(text || '');
+    if (!value) return false;
+
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  function b64ToText(b64) {
+    const s = String(b64 || '');
+    if (!s) return '';
+    try {
+      // atob handles base64 -> binary string; this is fine for URLs.
+      return atob(s);
+    } catch {
+      return '';
+    }
+  }
+
+  async function refreshTierButton() {
+    try {
+      const resp = await fetch('/api/me', { cache: 'no-store' });
+      if (!resp.ok) {
+        btn.hidden = true;
+        return;
+      }
+      const data = await resp.json();
+      if (!data || !data.authed) {
+        btn.hidden = true;
+        return;
+      }
+
+      currentTier = String(data.tierLabel || 'NO TIER');
+      const unlocked = currentTier === 'TIER 1' || currentTier === 'TIER 2';
+      btn.hidden = !unlocked;
+      if (unlocked) {
+        btn.textContent = currentTier === 'TIER 2'
+          ? 'TIER 2 UNLOCKED - CLICK HERE'
+          : 'TIER 1 UNLOCKED - CLICK HERE';
+      }
+    } catch {
+      btn.hidden = true;
+    }
+  }
+
+  btn.addEventListener('click', async () => {
+    if (copiedEl) copiedEl.textContent = '';
+    if (linkInput) linkInput.value = '';
+
+    btn.disabled = true;
+    const oldText = btn.textContent;
+    btn.textContent = 'LOADING…';
+
+    try {
+      const resp = await fetch('/api/mega', { cache: 'no-store' });
+      if (!resp.ok) {
+        btn.textContent = oldText;
+        btn.disabled = false;
+        return;
+      }
+      const data = await resp.json();
+      const encoding = String(data && data.encoding || '');
+      const payload = String(data && data.link || '');
+      const link = encoding === 'base64' ? b64ToText(payload) : payload;
+      if (linkInput) linkInput.value = link;
+      setOverlayOpen(true);
+    } catch {
+      // ignore
+    } finally {
+      btn.textContent = oldText;
+      btn.disabled = false;
+    }
+  });
+
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      const value = linkInput ? linkInput.value : '';
+      const ok = await copyText(value);
+      if (copiedEl) copiedEl.textContent = ok ? 'Copied.' : 'Copy failed.';
+      if (ok) setTimeout(() => {
+        if (copiedEl) copiedEl.textContent = '';
+      }, 1200);
+    });
+  }
+
+  if (closeBtn) closeBtn.addEventListener('click', () => setOverlayOpen(false));
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) setOverlayOpen(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setOverlayOpen(false);
+  });
+
+  refreshTierButton();
 }

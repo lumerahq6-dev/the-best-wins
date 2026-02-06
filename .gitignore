@@ -7,6 +7,8 @@
 server.out.log
 server.err.log
 cookies.txt
+cookies_*.txt
+STRIPE_SETUP.md
 
 # Local user DB (contains hashed credentials, referral data)
 data/

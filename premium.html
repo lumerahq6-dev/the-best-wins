@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The Best Wins — Collection</title>
+  <title>The Best Wins — Premium</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
@@ -31,26 +31,55 @@
   <!-- Tier unlocked (shows only at Tier 1+) -->
   <button class="tier-unlocked-btn" id="tier-unlocked-btn" type="button" hidden>TIER 1 UNLOCKED - CLICK HERE</button>
 
-  <div class="page-content folder-page">
-    <!-- Breadcrumb -->
-    <div class="breadcrumb">
-      <a href="index.html">🏠 Home</a>
-      <span>›</span>
-      <span class="current">Loading...</span>
-    </div>
+  <!-- ===== AGE DISCLAIMER OVERLAY ===== -->
+  <div class="disclaimer-overlay" id="disclaimer-overlay">
+    <div class="disclaimer-box">
+      <h1>⚠ Age Verification Required</h1>
+      <p class="subtitle">You must verify your age before proceeding</p>
 
-    <h1>Loading...</h1>
+      <div class="divider"></div>
 
-    <!-- Media Grid (populated by JS) -->
-    <div class="media-grid"></div>
+      <span class="warning-badge">18+ Content Warning</span>
 
-    <!-- Preview CTA (shown only in preview mode) -->
-    <div class="cta-banner" id="preview-cta" hidden>
-      <a href="/index.html?login=1">Get Free Access To 3k+ Videos</a>
+      <p>
+        <strong>This website contains adult content</strong> intended exclusively for individuals
+        who are <strong>at least 18 years of age</strong>.
+      </p>
+
+      <p>
+        By clicking "I Accept &amp; Enter" below, you confirm you are <strong>18+</strong>.
+      </p>
+
+      <div class="divider"></div>
+
+      <button class="btn-accept" id="accept-btn">I Accept &amp; Enter — I Am 18+</button>
     </div>
   </div>
 
-  <!-- Lightbox container added by JS -->
+  <a class="back-btn" href="/index.html">← Back</a>
+
+  <div class="page-content premium-page blurred" id="homepage">
+    <div class="premium-hero">
+      <h1>Premium Access</h1>
+      <p>Unlock everything instantly</p>
+    </div>
+
+    <img class="premium-top-preview" src="preview.png" alt="Preview" loading="eager" onerror="this.style.display='none'">
+
+    <div class="premium-embed" role="group" aria-label="Premium features">
+      <div class="premium-embed-content">
+        <div class="premium-embed-line"><strong>3k+ Videos</strong><br>Full library access across every folder and category.</div>
+        <div class="premium-embed-line"><strong>High Quality</strong><br>Best available versions: cleaner video, better details, fewer re-uploads.</div>
+        <div class="premium-embed-line"><strong>Audio Included</strong><br>Hear the reactions—full audio where available.</div>
+        <div class="premium-embed-line"><strong>Custom Content</strong><br>Exclusive drops and curated sets added over time.</div>
+        <div class="premium-embed-line"><strong>Instant Unlock</strong><br>No waiting—skip the referral grind and get everything now.</div>
+      </div>
+    </div>
+
+    <div class="premium-buywrap">
+      <a class="premium-buy" href="/api/stripe/checkout">Buy Premium Now For $6.50</a>
+    </div>
+  </div>
 
   <!-- Mega Link Popup (Tier 1+) -->
   <div class="mega-overlay" id="mega-overlay" aria-hidden="true">
