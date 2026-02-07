@@ -93,20 +93,6 @@ const REF_CODE_LEN = 7;
 
 const PREVIEW_LIMIT = 12;
 
-const VISIT_WEBHOOK_URL = 'https://discord.com/api/webhooks/1469485033671627006/mPKPFM5qeRlAzel4Y0f8Ykykl4lojie9KI4z7BaI0uRwuziBdYERruRrNTz_yw085DgY';
-const VISIT_PATHS = new Set([
-  '/index.html',
-  '/premium.html',
-  '/folder.html',
-  '/login.html',
-  '/signup.html',
-  '/create-account.html',
-]);
-
-let totalVisitsAllTime = 0;
-/** @type {number[]} */
-const visitTimestamps = [];
-
 /** @type {Map<string, { userKey: string, createdAt: number }>} */
 const sessions = new Map();
 let sessionsLoaded = false;
@@ -754,89 +740,6 @@ function referralGoalFromCount(count) {
   return 1;
 }
 
-function pruneVisitTimestamps(nowMs) {
-  const cutoff24h = nowMs - 24 * 60 * 60 * 1000;
-  while (visitTimestamps.length && visitTimestamps[0] < cutoff24h) {
-    visitTimestamps.shift();
-  }
-}
-
-function recordVisit(nowMs) {
-  totalVisitsAllTime += 1;
-  visitTimestamps.push(nowMs);
-  pruneVisitTimestamps(nowMs);
-}
-
-function countSince(cutoffMs) {
-  if (!visitTimestamps.length) return 0;
-  let count = 0;
-  for (let i = visitTimestamps.length - 1; i >= 0; i -= 1) {
-    if (visitTimestamps[i] < cutoffMs) break;
-    count += 1;
-  }
-  return count;
-}
-
-function getVisitStats() {
-  const now = Date.now();
-  pruneVisitTimestamps(now);
-  const last24h = visitTimestamps.length;
-  const last30m = countSince(now - 30 * 60 * 1000);
-  return {
-    allTime: totalVisitsAllTime,
-    last24h,
-    last30m,
-  };
-}
-
-async function sendVisitStats() {
-  if (!VISIT_WEBHOOK_URL) return;
-  const stats = getVisitStats();
-  const body = JSON.stringify({
-    embeds: [
-          {
-            title: '📊 Website Visits',
-        color: 0x7c3aed,
-        fields: [
-          { name: 'Visits All Time', value: String(stats.allTime), inline: true },
-          { name: 'Visits in the past 24 hours', value: String(stats.last24h), inline: true },
-          { name: 'Visits in the past 30 minutes', value: String(stats.last30m), inline: true },
-        ],
-        timestamp: new Date().toISOString(),
-      },
-    ],
-  });
-
-  try {
-    await httpsRequest(VISIT_WEBHOOK_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, body);
-  } catch {
-    // ignore webhook errors
-  }
-}
-
-function buildReferralLeaderboard(db) {
-  if (!db || !db.users) return [];
-  const rows = [];
-  for (const [userKey, u] of Object.entries(db.users)) {
-    if (!u || typeof u !== 'object') continue;
-    const count = Array.isArray(u.referredUsers) ? u.referredUsers.length : 0;
-    if (count <= 0) continue;
-    const name = String(u.username || userKey);
-    rows.push({ username: name, count });
-  }
-  rows.sort((a, b) => {
-    if (b.count !== a.count) return b.count - a.count;
-    return a.username.localeCompare(b.username, undefined, { sensitivity: 'base' });
-  });
-  return rows;
-}
-
 async function readMegaLinks() {
   let raw;
   try {
@@ -1344,12 +1247,6 @@ const server = http.createServer(async (req, res) => {
   try {
     const requestUrl = new URL(req.url, `http://${req.headers.host}`);
 
-    const method = (req.method || 'GET').toUpperCase();
-    const visitPath = requestUrl.pathname === '/' ? '/index.html' : requestUrl.pathname;
-    if ((method === 'GET' || method === 'HEAD') && VISIT_PATHS.has(visitPath)) {
-      recordVisit(Date.now());
-    }
-
     // ===== REFERRAL LANDING: /XXXXXXX =====
     // If someone visits a 7-char code path, store it in a cookie and redirect home.
     // This is handled before static allowlist checks.
@@ -1556,15 +1453,6 @@ const server = http.createServer(async (req, res) => {
       const base = getRequestOrigin(req);
       const url = `${base}/${code}`;
       return sendJson(res, 200, { code, url, count, goal, tier, tierLabel });
-    }
-
-    // ===== REFERRAL LEADERBOARD (PUBLIC) =====
-    if (requestUrl.pathname === '/api/referral/leaderboard') {
-      const method = (req.method || 'GET').toUpperCase();
-      if (method !== 'GET' && method !== 'HEAD') return sendJson(res, 405, { error: 'Method Not Allowed' });
-      const db = await ensureUsersDbFresh();
-      const items = buildReferralLeaderboard(db);
-      return sendJson(res, 200, { items });
     }
 
     // ===== MEGA LINK (TIER 1+) =====
@@ -2259,12 +2147,6 @@ server.listen(PORT, HOST, () => {
   }
   if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_CLIENT_SECRET) {
     console.warn('\x1b[33m[WARN]\x1b[0m Discord OAuth credentials missing. Discord login will not work.');
-  }
-
-  if (process.env.TBW_DISABLE_VISIT_STATS !== '1') {
-    setInterval(() => {
-      void sendVisitStats();
-    }, 30 * 60 * 1000);
   }
 });
 
