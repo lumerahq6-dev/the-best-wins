@@ -13,6 +13,116 @@ body {
   overflow-x: hidden;
 }
 
+/* ===== REFERRAL LEADERBOARD (LEFT) ===== */
+.referral-leaderboard {
+  position: fixed;
+  top: 50%;
+  left: 24px;
+  width: 240px;
+  z-index: 5200;
+  transform: translateY(-50%);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(20, 20, 40, 0.62);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 14px 14px 12px;
+  box-shadow: 0 14px 50px rgba(0, 0, 0, 0.35);
+}
+
+.leaderboard-title {
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  text-align: center;
+  margin-bottom: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.leaderboard-subtitle {
+  text-align: center;
+  font-size: 11px;
+  color: #9a9ab2;
+  margin-bottom: 12px;
+}
+
+.leaderboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 220px;
+}
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+}
+
+.leaderboard-rank {
+  font-weight: 900;
+  color: #c084fc;
+  min-width: 26px;
+}
+
+.leaderboard-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e6e6f2;
+  font-weight: 700;
+}
+
+.leaderboard-count {
+  color: #22d3ee;
+  font-weight: 900;
+}
+
+.leaderboard-empty {
+  text-align: center;
+  font-size: 12px;
+  color: #8c8ca3;
+  padding: 18px 6px;
+}
+
+.leaderboard-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.leaderboard-arrow {
+  width: 32px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(20, 20, 40, 0.6);
+  color: #e6e6f2;
+  font-weight: 900;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.leaderboard-arrow:hover {
+  transform: translateY(-1px);
+  border-color: rgba(192, 132, 252, 0.35);
+}
+
+.leaderboard-page {
+  font-size: 12px;
+  color: #9a9ab2;
+}
+
 /* ===== PROFILE MENU ===== */
 .profile {
   position: fixed;
@@ -1641,6 +1751,10 @@ body {
 
 /* ===== RESPONSIVE ===== */
 @media (max-width: 768px) {
+  .referral-leaderboard {
+    display: none;
+  }
+
   .homepage {
     padding: 40px 20px 60px;
   }

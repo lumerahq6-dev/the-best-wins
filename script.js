@@ -288,6 +288,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initAuthModal();
   initProfileMenu();
   initHomeReferralAndAuth();
+  initReferralLeaderboard();
   initTierMegaUnlock();
 
   // Best-effort: block right-click save/download menu on videos.
@@ -671,6 +672,74 @@ function initHomeReferralAndAuth() {
 
   // Initial paint
   refreshReferralUi();
+}
+
+// ===== REFERRAL LEADERBOARD (LEFT) =====
+function initReferralLeaderboard() {
+  const root = document.getElementById('referral-leaderboard');
+  if (!root) return;
+
+  const listEl = document.getElementById('leaderboard-list');
+  const prevBtn = document.getElementById('leaderboard-prev');
+  const nextBtn = document.getElementById('leaderboard-next');
+  const pageEl = document.getElementById('leaderboard-page');
+
+  let allItems = [];
+  let page = 0;
+  const pageSize = 10;
+
+  function renderPage() {
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    if (!allItems.length) {
+      listEl.innerHTML = '<div class="leaderboard-empty">No referrals yet.</div>';
+      if (pageEl) pageEl.textContent = '1/1';
+      return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(allItems.length / pageSize));
+    page = (page + totalPages) % totalPages;
+    const start = page * pageSize;
+    const pageItems = allItems.slice(start, start + pageSize);
+
+    pageItems.forEach((item, idx) => {
+      const rank = start + idx + 1;
+      const row = document.createElement('div');
+      row.className = 'leaderboard-row';
+      row.innerHTML = `
+        <div class="leaderboard-rank">#${rank}</div>
+        <div class="leaderboard-name">${String(item.username)}</div>
+        <div class="leaderboard-count">${Number(item.count || 0)}</div>
+      `;
+      listEl.appendChild(row);
+    });
+
+    if (pageEl) pageEl.textContent = `${page + 1}/${totalPages}`;
+  }
+
+  async function loadLeaderboard() {
+    try {
+      const resp = await fetch('/api/referral/leaderboard', { cache: 'no-store' });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      allItems = Array.isArray(data && data.items) ? data.items : [];
+      renderPage();
+    } catch {
+      // ignore
+    }
+  }
+
+
+  if (prevBtn) prevBtn.addEventListener('click', () => {
+    page -= 1;
+    renderPage();
+  });
+  if (nextBtn) nextBtn.addEventListener('click', () => {
+    page += 1;
+    renderPage();
+  });
+
+  loadLeaderboard();
 }
 
 // ===== PROFILE MENU (TOP RIGHT) =====
