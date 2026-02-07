@@ -1065,6 +1065,7 @@ body {
   display: block;
 }
 
+.folder-card h2,
 .folder-card h3 {
   font-size: 18px;
   font-weight: 700;
