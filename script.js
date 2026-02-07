@@ -337,6 +337,30 @@ function initLeaderboard() {
   loadPage(0);
 }
 
+// ===== TOS / DMCA POPUP =====
+function initTosDmcaPopup() {
+  const link = document.getElementById('tos-dmca-link');
+  const overlay = document.getElementById('tos-dmca-overlay');
+  if (!link || !overlay) return;
+
+  const closeBtn = document.getElementById('tos-dmca-close');
+
+  function setOpen(isOpen) {
+    overlay.classList.toggle('active', isOpen);
+    overlay.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+    document.body.style.overflow = isOpen ? 'hidden' : '';
+  }
+
+  link.addEventListener('click', () => setOpen(true));
+  if (closeBtn) closeBtn.addEventListener('click', () => setOpen(false));
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) setOpen(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setOpen(false);
+  });
+}
+
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
   initBackground();
@@ -348,6 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initHomeReferralAndAuth();
   initTierMegaUnlock();
   initLeaderboard();
+  initTosDmcaPopup();
 
   // Best-effort: block right-click save/download menu on videos.
   document.addEventListener('contextmenu', (e) => {
