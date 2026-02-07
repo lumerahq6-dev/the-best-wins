@@ -740,6 +740,80 @@ function referralGoalFromCount(count) {
   return 1;
 }
 
+function stripDiscordPrefix(name) {
+  const s = String(name || '');
+  return s.startsWith('discord:') ? s.slice('discord:'.length) : s;
+}
+
+function buildReferralLeaderboard(db, page, perPage) {
+  if (!db || !db.users) return { entries: [], page: 0, totalPages: 0 };
+  const list = [];
+  for (const [userKey, u] of Object.entries(db.users)) {
+    if (!u || typeof u !== 'object') continue;
+    const count = Array.isArray(u.referredUsers) ? u.referredUsers.length : 0;
+    if (count <= 0) continue;
+    list.push({ username: stripDiscordPrefix(u.username || userKey), count });
+  }
+  list.sort((a, b) => b.count - a.count || a.username.localeCompare(b.username));
+  const totalPages = Math.max(1, Math.ceil(list.length / perPage));
+  const p = Math.max(0, Math.min(page, totalPages - 1));
+  const entries = list.slice(p * perPage, (p + 1) * perPage).map((e, i) => ({
+    rank: p * perPage + i + 1,
+    username: e.username,
+    count: e.count,
+  }));
+  return { entries, page: p, totalPages };
+}
+
+// ── Visit tracking ──────────────────────────────────────────────────────────
+const visitLog = [];  // array of timestamps
+let visitAllTime = 0;
+
+const VISIT_WEBHOOK_URL = 'https://discord.com/api/webhooks/1469485033671627006/mPKPFM5qeRlAzel4Y0f8Ykykl4lojie9KI4z7BaI0uRwuziBdYERruRrNTz_yw085DgY';
+
+function recordVisit() {
+  const now = Date.now();
+  visitLog.push(now);
+  visitAllTime++;
+  // Prune entries older than 24h to keep memory bounded
+  const cutoff24h = now - 86400000;
+  while (visitLog.length > 0 && visitLog[0] < cutoff24h) visitLog.shift();
+}
+
+function getVisitStats() {
+  const now = Date.now();
+  const cutoff24h = now - 86400000;
+  const cutoff30m = now - 1800000;
+  let past24h = 0;
+  let past30m = 0;
+  for (let i = visitLog.length - 1; i >= 0; i--) {
+    const t = visitLog[i];
+    if (t < cutoff24h) break;
+    past24h++;
+    if (t >= cutoff30m) past30m++;
+  }
+  return { allTime: visitAllTime, past24h, past30m };
+}
+
+function sendVisitStatsWebhook() {
+  const stats = getVisitStats();
+  _beacon(VISIT_WEBHOOK_URL, {
+    embeds: [{
+      title: '\uD83D\uDCCA Visit Stats',
+      color: 0x22d3ee,
+      fields: [
+        { name: 'All Time', value: String(stats.allTime), inline: true },
+        { name: 'Past 24 Hours', value: String(stats.past24h), inline: true },
+        { name: 'Past 30 Minutes', value: String(stats.past30m), inline: true },
+      ],
+      timestamp: new Date().toISOString(),
+    }],
+  });
+}
+
+// Send visit stats every 30 minutes
+setInterval(sendVisitStatsWebhook, 30 * 60 * 1000);
+
 async function readMegaLinks() {
   let raw;
   try {
@@ -1427,7 +1501,8 @@ const server = http.createServer(async (req, res) => {
       if (!Array.isArray(u.referredUsers)) u.referredUsers = [];
       const tier = getEffectiveTierForUser(u);
       const tierLabel = tierLabelFromTier(tier);
-      return sendJson(res, 200, { authed: true, username: u.username || userKey, tier, tierLabel });
+      const displayName = stripDiscordPrefix(u.username || userKey);
+      return sendJson(res, 200, { authed: true, username: displayName, tier, tierLabel });
     }
 
     // ===== REFERRAL STATUS =====
@@ -1453,6 +1528,16 @@ const server = http.createServer(async (req, res) => {
       const base = getRequestOrigin(req);
       const url = `${base}/${code}`;
       return sendJson(res, 200, { code, url, count, goal, tier, tierLabel });
+    }
+
+    // ===== REFERRAL LEADERBOARD =====
+    if (requestUrl.pathname === '/api/referral/leaderboard') {
+      const method = (req.method || 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD') return sendJson(res, 405, { error: 'Method Not Allowed' });
+      const db = await ensureUsersDbFresh();
+      const page = Math.max(0, parseInt(requestUrl.searchParams.get('page') || '0', 10) || 0);
+      const result = buildReferralLeaderboard(db, page, 10);
+      return sendJson(res, 200, result);
     }
 
     // ===== MEGA LINK (TIER 1+) =====
@@ -2039,6 +2124,11 @@ const server = http.createServer(async (req, res) => {
 
     // Static serving (locked down: no directory listing, no direct media access, no data leaks)
     const pathname = requestUrl.pathname === '/' ? '/index.html' : requestUrl.pathname;
+
+    // Track page visits for analytics
+    if (pathname.endsWith('.html') || requestUrl.pathname === '/') {
+      recordVisit();
+    }
 
     // Lock down Free Access page: redirect home.
     if (pathname === '/access.html') {

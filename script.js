@@ -279,6 +279,64 @@ function openLightbox(item) {
   lightbox.classList.add('active');
 }
 
+// ===== REFERRAL LEADERBOARD =====
+function initLeaderboard() {
+  const widget = document.getElementById('leaderboard-widget');
+  if (!widget) return;
+
+  const listEl = document.getElementById('leaderboard-list');
+  const pageEl = document.getElementById('lb-page');
+  const prevBtn = document.getElementById('lb-prev');
+  const nextBtn = document.getElementById('lb-next');
+  if (!listEl || !pageEl || !prevBtn || !nextBtn) return;
+
+  let currentPage = 0;
+  let totalPages = 1;
+
+  async function loadPage(page) {
+    try {
+      const resp = await fetch(`/api/referral/leaderboard?page=${page}`, { cache: 'no-store' });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      currentPage = data.page || 0;
+      totalPages = data.totalPages || 1;
+      const entries = Array.isArray(data.entries) ? data.entries : [];
+
+      listEl.innerHTML = '';
+      if (entries.length === 0) {
+        listEl.innerHTML = '<li style="justify-content:center;color:rgba(255,255,255,0.35);font-size:10px;">No referrals yet</li>';
+      } else {
+        entries.forEach(e => {
+          const li = document.createElement('li');
+          li.innerHTML = `<span class="lb-rank">#${e.rank}</span><span class="lb-name">${escapeHtml(e.username)}</span><span class="lb-count">${e.count}</span>`;
+          listEl.appendChild(li);
+        });
+      }
+
+      pageEl.textContent = `${currentPage + 1} / ${totalPages}`;
+      prevBtn.disabled = currentPage <= 0;
+      nextBtn.disabled = currentPage >= totalPages - 1;
+    } catch {
+      // ignore
+    }
+  }
+
+  function escapeHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  prevBtn.addEventListener('click', () => {
+    if (currentPage > 0) loadPage(currentPage - 1);
+  });
+  nextBtn.addEventListener('click', () => {
+    if (currentPage < totalPages - 1) loadPage(currentPage + 1);
+  });
+
+  loadPage(0);
+}
+
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
   initBackground();
@@ -289,6 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initProfileMenu();
   initHomeReferralAndAuth();
   initTierMegaUnlock();
+  initLeaderboard();
 
   // Best-effort: block right-click save/download menu on videos.
   document.addEventListener('contextmenu', (e) => {
@@ -567,7 +626,7 @@ function initHomeReferralAndAuth() {
 
       const count = Number(data.count || 0);
       const goal = Number(data.goal || 1);
-      const pct = goal > 0 ? Math.max(0, Math.min(100, Math.round((count / goal) * 100))) : 0;
+      const pct = goal > 0 ? Math.min(100, Math.round((count / goal) * 100)) : 0;
       if (goalCountEl) goalCountEl.textContent = `${count}/${goal}`;
       if (barFillEl) barFillEl.style.width = `${pct}%`;
 
