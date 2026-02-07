@@ -691,14 +691,14 @@ function ensureUserReferralCode(db, userKey) {
 
 function tierLabelFromCount(count) {
   const n = Number(count || 0);
-  if (n >= 3) return 'TIER 2';
+  if (n >= 4) return 'TIER 2';
   if (n >= 1) return 'TIER 1';
   return 'NO TIER';
 }
 
 function tierFromCount(count) {
   const n = Number(count || 0);
-  if (n >= 3) return 2;
+  if (n >= 4) return 2;
   if (n >= 1) return 1;
   return 0;
 }
@@ -721,7 +721,7 @@ function normalizeManualTier(value) {
 
 function tierMinCount(tier) {
   const t = Number(tier || 0);
-  if (t >= 2) return 3;
+  if (t >= 2) return 4;
   if (t >= 1) return 1;
   return 0;
 }
@@ -735,8 +735,8 @@ function getEffectiveTierForUser(u) {
 
 function referralGoalFromCount(count) {
   const n = Number(count || 0);
-  if (n >= 3) return 3;
-  if (n >= 1) return 3;
+  if (n >= 4) return 4;
+  if (n >= 1) return 4;
   return 1;
 }
 
