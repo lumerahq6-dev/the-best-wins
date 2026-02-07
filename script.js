@@ -337,6 +337,35 @@ function initLeaderboard() {
   loadPage(0);
 }
 
+function initLeaderboardPlacement() {
+  const widget = document.getElementById('leaderboard-widget');
+  if (!widget) return;
+
+  const originalParent = widget.parentElement;
+  const originalNext = widget.nextSibling;
+  const referralFooter = document.getElementById('referral-footer');
+  const tutorialBtn = document.getElementById('referral-tutorial');
+
+  function place() {
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile && referralFooter && tutorialBtn) {
+      tutorialBtn.insertAdjacentElement('afterend', widget);
+      return;
+    }
+    if (!originalParent) return;
+    if (originalNext && originalNext.parentNode === originalParent) {
+      originalParent.insertBefore(widget, originalNext);
+    } else {
+      originalParent.appendChild(widget);
+    }
+  }
+
+  place();
+  window.addEventListener('resize', () => {
+    place();
+  });
+}
+
 // ===== TOS / DMCA POPUP =====
 function initTosDmcaPopup() {
   const link = document.getElementById('tos-dmca-link');
@@ -372,6 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initHomeReferralAndAuth();
   initTierMegaUnlock();
   initLeaderboard();
+  initLeaderboardPlacement();
   initTosDmcaPopup();
 
   // Best-effort: block right-click save/download menu on videos.

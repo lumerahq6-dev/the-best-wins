@@ -1949,6 +1949,12 @@ body {
 
 @media (max-width: 768px) {
   .leaderboard-widget {
-    display: none;
+    position: static;
+    left: auto;
+    top: auto;
+    transform: none;
+    z-index: auto;
+    width: min(360px, 100%);
+    margin: 14px auto 0;
   }
 }
