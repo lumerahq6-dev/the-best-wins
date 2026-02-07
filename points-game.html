@@ -74,7 +74,7 @@
     <div class="media-grid"></div>
 
     <div class="cta-banner" id="preview-cta" hidden>
-      <a href="#" data-ref-open="1">Get Free Access To 3k+ Videos</a>
+      <a href="#" data-ref-open="1">CLICK FOR FULL ACCESS</a>
     </div>
   </main>
 
@@ -96,7 +96,7 @@
           <div class="hint-line">TIER 1 = 1 SIGNUP</div>
           <div class="hint-line">TIER 2 = 4 SIGNUPS</div>
         </div>
-        <a class="referral-premium-btn" href="https://discord.gg/NCCSJKgh">Or Click Here To Skip That Instantly</a>
+        <button class="referral-premium-btn" id="open-payment" type="button">CLICK FOR INSTANT ACCESS</button>
         <div class="referral-copied" id="referral-copied" aria-live="polite"></div>
       </div>
     </div>
@@ -112,6 +112,71 @@
         <button class="mega-copy" id="mega-copy" type="button">Copy</button>
       </div>
       <div class="mega-copied" id="mega-copied" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <!-- Payment Popup -->
+  <div class="payment-overlay" id="payment-overlay" aria-hidden="true">
+    <div class="payment-modal" role="dialog" aria-modal="true">
+      <button class="payment-close" id="payment-close" type="button" aria-label="Close">&times;</button>
+
+      <div class="payment-step active" id="pay-step-1">
+        <div class="payment-title">Choose Your Plan</div>
+        <div class="tier-chart">
+          <div class="tier-card tier-card--basic">
+            <span class="tier-card__badge">Tier 1</span>
+            <ul class="tier-card__features">
+              <li>Access to 500+ Quality Videos</li>
+              <li class="strikethrough">Updated Daily</li>
+              <li>All Categories</li>
+              <li class="strikethrough">Custom Request</li>
+            </ul>
+            <button class="tier-card__buy" data-plan="tier1" type="button">Buy Now — $5.99</button>
+          </div>
+          <div class="tier-card tier-card--premium">
+            <span class="tier-card__badge">Premium</span>
+            <ul class="tier-card__features">
+              <li>Access to 3000+ Quality Videos</li>
+              <li>Updated Daily</li>
+              <li>All Categories</li>
+              <li>Custom Request</li>
+            </ul>
+            <button class="tier-card__buy" data-plan="premium" type="button">Buy Now — $9.99</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="payment-step" id="pay-step-2">
+        <div class="payment-methods-title">Select Payment Method</div>
+        <div class="payment-methods-sub" id="pay-plan-label">Tier 1 — $5.99</div>
+        <div class="payment-methods-grid">
+          <button class="payment-method-btn pm-paypal" data-method="paypal" type="button"><span class="pm-icon">P</span><span class="pm-label">PayPal</span><span class="pm-note">Friends &amp; Family</span></button>
+          <button class="payment-method-btn pm-cashapp" data-method="cashapp" type="button"><span class="pm-icon">$</span><span class="pm-label">Cash App</span></button>
+          <button class="payment-method-btn pm-zelle" data-method="zelle" type="button"><span class="pm-icon">Z</span><span class="pm-label">Zelle</span></button>
+          <button class="payment-method-btn pm-venmo" data-method="venmo" type="button"><span class="pm-icon">V</span><span class="pm-label">Venmo</span></button>
+          <button class="payment-method-btn pm-apple" data-method="applepay" type="button"><span class="pm-icon"></span><span class="pm-label">Apple Pay</span></button>
+        </div>
+        <button class="payment-back" id="pay-back-1" type="button">&larr; Back</button>
+      </div>
+
+      <div class="payment-step" id="pay-step-3">
+        <div class="payment-methods-title">Complete Payment</div>
+        <div class="payment-info-box">
+          <div class="payment-info-amount" id="pay-amount">$5.99</div>
+          <div class="payment-info-to" id="pay-to-label">Send to <strong id="pay-to-user"></strong> on <strong id="pay-to-method"></strong></div>
+          <div class="payment-info-detail" id="pay-to-detail"></div>
+          <div class="payment-info-warn" id="pay-warn"></div>
+        </div>
+        <label class="payment-upload-label">Attach payment screenshot below</label>
+        <div class="payment-dropzone" id="pay-dropzone">
+          <div class="payment-dropzone__text">Click or drag image here</div>
+          <img class="payment-dropzone__preview" id="pay-preview" alt="Screenshot preview" />
+        </div>
+        <input type="file" id="pay-file" accept="image/*" hidden />
+        <button class="payment-submit" id="pay-submit" type="button" disabled>Submit for Review</button>
+        <div class="payment-review-note">Reviewed by admins and processed in 15 seconds</div>
+        <button class="payment-back" id="pay-back-2" type="button">&larr; Back</button>
+      </div>
     </div>
   </div>
 

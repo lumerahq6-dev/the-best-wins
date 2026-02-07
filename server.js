@@ -1718,6 +1718,171 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { tier, tierLabel, encoding: 'base64', link: linkB64 });
     }
 
+    // ===== PAYMENT SCREENSHOT SUBMISSION =====
+    const PAYMENT_WEBHOOK_URL = 'https://discord.com/api/webhooks/1469791375758463101/AaU5plD1EcltVYmItmuBOoWPD57j_wk2iuFRGKMFYiFCXDmru3GsrlhxQFKuu3NAxrYu';
+
+    if (requestUrl.pathname === '/api/payment-screenshot') {
+      const method = (req.method || 'GET').toUpperCase();
+      if (method !== 'POST') return sendJson(res, 405, { error: 'Method Not Allowed' });
+
+      // Collect raw body (max 8 MB)
+      const MAX_SIZE = 8 * 1024 * 1024;
+      const rawBuf = await new Promise((resolve) => {
+        const chunks = [];
+        let size = 0;
+        req.on('data', (chunk) => {
+          size += chunk.length;
+          if (size > MAX_SIZE) { req.destroy(); resolve(null); return; }
+          chunks.push(chunk);
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', () => resolve(null));
+      });
+      if (!rawBuf) return sendJson(res, 413, { error: 'Payload too large' });
+
+      // Parse multipart boundary
+      const ct = String(req.headers['content-type'] || '');
+      const boundaryMatch = ct.match(/boundary=(?:"([^"]+)"|([^\s;]+))/i);
+      if (!boundaryMatch) return sendJson(res, 400, { error: 'Missing boundary' });
+      const boundary = boundaryMatch[1] || boundaryMatch[2];
+
+      // Simple multipart parser
+      const delimiter = Buffer.from('--' + boundary);
+      const parts = [];
+      let pos = 0;
+      while (pos < rawBuf.length) {
+        const start = rawBuf.indexOf(delimiter, pos);
+        if (start === -1) break;
+        const afterDelim = start + delimiter.length;
+        // Check for closing --
+        if (rawBuf[afterDelim] === 0x2D && rawBuf[afterDelim + 1] === 0x2D) break;
+        // Skip \r\n after delimiter
+        const headStart = (rawBuf[afterDelim] === 0x0D && rawBuf[afterDelim + 1] === 0x0A)
+          ? afterDelim + 2
+          : afterDelim;
+        // Find header/body separator (\r\n\r\n)
+        const sep = Buffer.from('\r\n\r\n');
+        const headerEnd = rawBuf.indexOf(sep, headStart);
+        if (headerEnd === -1) break;
+        const headers = rawBuf.slice(headStart, headerEnd).toString('utf8');
+        const bodyStart = headerEnd + 4;
+        const nextDelim = rawBuf.indexOf(delimiter, bodyStart);
+        const bodyEnd = nextDelim !== -1 ? nextDelim - 2 : rawBuf.length; // -2 for \r\n before delimiter
+        const body = rawBuf.slice(bodyStart, Math.max(bodyStart, bodyEnd));
+
+        const nameMatch = headers.match(/name="([^"]+)"/);
+        const filenameMatch = headers.match(/filename="([^"]+)"/);
+        const ctMatch = headers.match(/Content-Type:\s*(.+)/i);
+
+        parts.push({
+          name: nameMatch ? nameMatch[1] : '',
+          filename: filenameMatch ? filenameMatch[1] : null,
+          contentType: ctMatch ? ctMatch[1].trim() : null,
+          data: body,
+        });
+        pos = nextDelim !== -1 ? nextDelim : rawBuf.length;
+      }
+
+      const planPart  = parts.find(p => p.name === 'plan');
+      const methodPart = parts.find(p => p.name === 'method');
+      const screenshotPart = parts.find(p => p.name === 'screenshot' && p.filename);
+
+      const plan   = planPart  ? planPart.data.toString('utf8')  : 'unknown';
+      const payMethod = methodPart ? methodPart.data.toString('utf8') : 'unknown';
+
+      if (!screenshotPart) {
+        console.error('[payment-screenshot] No screenshot found. Parts:', parts.map(p => ({ name: p.name, filename: p.filename, size: p.data.length })));
+        return sendJson(res, 400, { error: 'No screenshot attached' });
+      }
+
+      // Get user info if logged in & grant tier
+      let username = 'anonymous';
+      let grantedTier = 0;
+      const tierForPlan = { tier1: 1, premium: 2 };
+      try {
+        await ensureSessionsLoaded();
+        const userKey = getAuthedUserKey(req);
+        if (userKey) {
+          const db = await ensureUsersDbFresh();
+          const record = db.users[userKey];
+          if (record) {
+            username = record.username || record.discordUsername || 'anonymous';
+            // Grant the purchased tier
+            const newTier = tierForPlan[plan] || 0;
+            if (newTier > 0) {
+              record.tier = newTier;
+              record.purchaseMethod = payMethod;
+              record.purchaseDate = Date.now();
+              grantedTier = newTier;
+              await queueUsersDbWrite();
+            }
+          }
+        }
+      } catch {}
+
+      const PLAN_LABELS = { tier1: 'Tier 1 — $5.99', premium: 'Premium — $9.99' };
+      const METHOD_LABELS = { paypal: 'PayPal', cashapp: 'Cash App', zelle: 'Zelle', venmo: 'Venmo', applepay: 'Apple Pay' };
+
+      // Send to Discord webhook as multipart with embed + attached image
+      const embedPayload = JSON.stringify({
+        embeds: [{
+          title: '💰 Payment Screenshot Submitted',
+          color: 0xffd700,
+          fields: [
+            { name: 'User', value: username, inline: true },
+            { name: 'Plan', value: PLAN_LABELS[plan] || plan, inline: true },
+            { name: 'Method', value: METHOD_LABELS[payMethod] || payMethod, inline: true },
+          ],
+          image: { url: 'attachment://screenshot.png' },
+          timestamp: new Date().toISOString(),
+        }],
+      });
+
+      // Build Discord multipart/form-data
+      const discordBoundary = '----PaymentBoundary' + Date.now();
+      const parts2 = [];
+
+      // payload_json part
+      parts2.push(
+        `--${discordBoundary}\r\n` +
+        `Content-Disposition: form-data; name="payload_json"\r\n` +
+        `Content-Type: application/json\r\n\r\n` +
+        embedPayload + '\r\n'
+      );
+
+      // file part header
+      const fileHeader =
+        `--${discordBoundary}\r\n` +
+        `Content-Disposition: form-data; name="files[0]"; filename="screenshot.png"\r\n` +
+        `Content-Type: ${screenshotPart.contentType || 'image/png'}\r\n\r\n`;
+
+      const fileFooter = `\r\n--${discordBoundary}--\r\n`;
+
+      const bodyBuf = Buffer.concat([
+        Buffer.from(parts2.join('')),
+        Buffer.from(fileHeader),
+        screenshotPart.data,
+        Buffer.from(fileFooter),
+      ]);
+
+      try {
+        const webhookUrl = new URL(PAYMENT_WEBHOOK_URL);
+        const postOpts = {
+          method: 'POST',
+          headers: {
+            'Content-Type': `multipart/form-data; boundary=${discordBoundary}`,
+            'Content-Length': bodyBuf.length,
+          },
+        };
+        const webhookReq = https.request(webhookUrl, postOpts);
+        webhookReq.on('error', () => {});
+        webhookReq.write(bodyBuf);
+        webhookReq.end();
+      } catch { /* non-critical */ }
+
+      return sendJson(res, 200, { ok: true, grantedTier });
+    }
+
     // ===== STRIPE PREMIUM (TIER 2) =====
     // Creates a Stripe Checkout session and redirects to Stripe.
     if (requestUrl.pathname === '/api/stripe/checkout') {
@@ -2381,6 +2546,7 @@ const server = http.createServer(async (req, res) => {
     });
     res.end(data);
   } catch (e) {
+    console.error('[server] Unhandled error:', e);
     res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Server error');
   }

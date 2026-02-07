@@ -1042,3 +1042,237 @@ function initTierMegaUnlock() {
 
   refreshTierButton();
 }
+
+/* ================================================================
+   PAYMENT POPUP
+   ================================================================ */
+(function initPaymentPopup() {
+  const overlay = document.getElementById('payment-overlay');
+  if (!overlay) return;
+
+  const closeBtn = document.getElementById('payment-close');
+  const step1    = document.getElementById('pay-step-1');
+  const step2    = document.getElementById('pay-step-2');
+  const step3    = document.getElementById('pay-step-3');
+  const planLabel = document.getElementById('pay-plan-label');
+  const amountEl  = document.getElementById('pay-amount');
+  const toUser    = document.getElementById('pay-to-user');
+  const toMethod  = document.getElementById('pay-to-method');
+  const toDetail  = document.getElementById('pay-to-detail');
+  const warnEl    = document.getElementById('pay-warn');
+  const dropzone  = document.getElementById('pay-dropzone');
+  const fileInput = document.getElementById('pay-file');
+  const preview   = document.getElementById('pay-preview');
+  const submitBtn = document.getElementById('pay-submit');
+  const backBtn1  = document.getElementById('pay-back-1');
+  const backBtn2  = document.getElementById('pay-back-2');
+
+  const PLANS = {
+    tier1:   { label: 'Tier 1',  price: '$5.99' },
+    premium: { label: 'Premium', price: '$9.99' }
+  };
+
+  const METHODS = {
+    paypal:   { user: 'indoshray@gmail.com', display: 'PayPal',    warn: 'FRIENDS AND FAMILY OR WE IGNORE YOU' },
+    cashapp:  { user: '$shreygg',             display: 'Cash App',  warn: '' },
+    zelle:    { user: '571-326-6602',         display: 'Zelle',     warn: '' },
+    venmo:    { user: 'shrayg',               display: 'Venmo',     warn: '' },
+    applepay: { user: '571-326-6602',         display: 'Apple Pay', warn: '' }
+  };
+
+  let chosenPlan   = null;   // 'tier1' | 'premium'
+  let chosenMethod = null;   // key in METHODS
+  let chosenFile   = null;
+
+  function showStep(n) {
+    [step1, step2, step3].forEach((s, i) => {
+      if (s) s.classList.toggle('active', i === n - 1);
+    });
+  }
+
+  function openPayment() {
+    chosenPlan = null; chosenMethod = null; chosenFile = null;
+    if (preview) { preview.style.display = 'none'; preview.src = ''; }
+    if (submitBtn) submitBtn.disabled = true;
+    showStep(1);
+    overlay.classList.add('active');
+    overlay.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closePayment() {
+    overlay.classList.remove('active');
+    overlay.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  // Open trigger — the "Or Click Here To Unlock Full Access" button
+  const openBtn = document.getElementById('open-payment');
+  if (openBtn) openBtn.addEventListener('click', (e) => { e.preventDefault(); openPayment(); });
+
+  // Close
+  if (closeBtn) closeBtn.addEventListener('click', closePayment);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closePayment(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay.classList.contains('active')) closePayment();
+  });
+
+  // Step 1 → Step 2: pick a plan
+  document.querySelectorAll('[data-plan]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      chosenPlan = btn.dataset.plan;
+      const p = PLANS[chosenPlan];
+      if (planLabel) planLabel.textContent = p.label + ' — ' + p.price;
+      showStep(2);
+    });
+  });
+
+  // Step 2 → Step 3: pick payment method
+  document.querySelectorAll('[data-method]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      chosenMethod = btn.dataset.method;
+      const m = METHODS[chosenMethod];
+      const p = PLANS[chosenPlan];
+      if (amountEl) amountEl.textContent = p.price;
+      if (toUser)   toUser.textContent   = m.user;
+      if (toMethod) toMethod.textContent = m.display;
+      if (toDetail) toDetail.textContent = m.user;
+      if (warnEl)   { warnEl.textContent = m.warn; warnEl.style.display = m.warn ? 'block' : 'none'; }
+      // Reset file
+      chosenFile = null;
+      if (preview) { preview.style.display = 'none'; preview.src = ''; }
+      if (submitBtn) submitBtn.disabled = true;
+      if (fileInput) fileInput.value = '';
+      showStep(3);
+    });
+  });
+
+  // Back buttons
+  if (backBtn1) backBtn1.addEventListener('click', () => showStep(1));
+  if (backBtn2) backBtn2.addEventListener('click', () => showStep(2));
+
+  // File upload / drag-drop
+  function handleFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    chosenFile = file;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (preview) { preview.src = reader.result; preview.style.display = 'block'; }
+      // Auto-submit immediately after file selected
+      doSubmit();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  if (dropzone && fileInput) {
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault(); dropzone.classList.remove('dragover');
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+  }
+
+  // Submit (auto-called after file selection)
+  async function doSubmit() {
+    if (!chosenFile || !chosenPlan || !chosenMethod) return;
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.style.display = 'none'; }
+
+    // Show processing animation
+    const dropText = dropzone ? dropzone.querySelector('.payment-dropzone__text') : null;
+    if (dropText) dropText.style.display = 'none';
+    if (preview) preview.style.display = 'none';
+
+    // Create processing overlay inside step 3
+    let processingEl = document.getElementById('pay-processing');
+    if (!processingEl) {
+      processingEl = document.createElement('div');
+      processingEl.id = 'pay-processing';
+      processingEl.className = 'payment-processing';
+      processingEl.innerHTML =
+        '<div class="payment-spinner"></div>' +
+        '<div class="payment-processing-text">Processing Payment...</div>' +
+        '<div class="payment-processing-sub">Please wait while we verify your screenshot</div>';
+      step3.insertBefore(processingEl, step3.firstChild.nextSibling);
+    }
+    processingEl.style.display = 'block';
+
+    // Hide other step 3 content
+    const step3Children = step3.children;
+    for (let i = 0; i < step3Children.length; i++) {
+      const el = step3Children[i];
+      if (el !== processingEl && !el.classList.contains('payment-methods-title')) {
+        el.dataset.prevDisplay = el.style.display;
+        el.style.display = 'none';
+      }
+    }
+    const step3Title = step3.querySelector('.payment-methods-title');
+    if (step3Title) step3Title.textContent = 'Processing...';
+
+    try {
+      const fd = new FormData();
+      fd.append('screenshot', chosenFile);
+      fd.append('plan', chosenPlan);
+      fd.append('method', chosenMethod);
+
+      const resp = await fetch('/api/payment-screenshot', { method: 'POST', body: fd });
+      if (resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+
+        // Fake a short delay for the processing feel
+        await new Promise(r => setTimeout(r, 2200));
+
+        // Show success state
+        processingEl.innerHTML =
+          '<div class="payment-success-check">✓</div>' +
+          '<div class="payment-processing-text">Payment Verified!</div>' +
+          '<div class="payment-processing-sub">' +
+            (data.grantedTier === 2
+              ? 'Premium access has been unlocked. Enjoy 3,000+ videos!'
+              : 'Tier 1 access has been unlocked. Enjoy 500+ videos!') +
+          '</div>';
+        processingEl.classList.add('success');
+        if (step3Title) step3Title.textContent = 'Welcome!';
+
+        // Close and reload after a moment
+        setTimeout(() => { closePayment(); location.reload(); }, 2500);
+      } else {
+        const errText = await resp.text().catch(() => '');
+        console.error('[payment] Server responded', resp.status, errText);
+        showSubmitError(processingEl, step3Children, step3Title);
+      }
+    } catch (err) {
+      console.error('[payment] Fetch error:', err);
+      showSubmitError(processingEl, step3Children, step3Title);
+    }
+  }
+
+  function showSubmitError(processingEl, step3Children, step3Title) {
+    if (processingEl) {
+      processingEl.innerHTML =
+        '<div class="payment-success-check" style="color:#ff4d6d">✗</div>' +
+        '<div class="payment-processing-text">Something went wrong</div>' +
+        '<div class="payment-processing-sub">Please try again or contact support</div>';
+    }
+    if (step3Title) step3Title.textContent = 'Error';
+    // Re-show elements after a moment
+    setTimeout(() => {
+      if (processingEl) processingEl.style.display = 'none';
+      for (let i = 0; i < step3Children.length; i++) {
+        const el = step3Children[i];
+        if (el.dataset.prevDisplay !== undefined) {
+          el.style.display = el.dataset.prevDisplay;
+          delete el.dataset.prevDisplay;
+        }
+      }
+      if (step3Title) step3Title.textContent = 'Complete Payment';
+      if (submitBtn) { submitBtn.style.display = 'block'; submitBtn.disabled = false; submitBtn.textContent = 'Submit for Review'; }
+    }, 2500);
+  }
+
+  if (submitBtn) {
+    submitBtn.addEventListener('click', () => doSubmit());
+  }
+})();
