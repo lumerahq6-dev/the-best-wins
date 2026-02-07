@@ -125,6 +125,11 @@ const STATIC_ALLOWLIST = new Set([
   '/login.html',
   '/signup.html',
   '/create-account.html',
+  '/streamer-wins.html',
+  '/points-game.html',
+  '/dick-reactions.html',
+  '/tit-flashing.html',
+  '/ass-flashing.html',
   '/',
 ]);
 
