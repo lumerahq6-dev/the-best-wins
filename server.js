@@ -1149,7 +1149,7 @@ function _getMonotonicSignupTotal(db) {
   return _signupTotalMonotonic;
 }
 
-function _emitSignup(db, username, provider, referredBy) {
+function _emitSignup(db, username, provider, referredBy, ip) {
   const total = _getMonotonicSignupTotal(db);
   const last24h = _usersSignedUpLast24h(db);
   let referrerName = null;
@@ -1165,6 +1165,7 @@ function _emitSignup(db, username, provider, referredBy) {
         { name: 'Username', value: String(username), inline: true },
         { name: 'Provider', value: String(provider), inline: true },
         { name: 'Referred By', value: referrerName ? String(referrerName) : 'Direct (no referral)', inline: true },
+        { name: 'IP', value: String(ip || 'unknown'), inline: true },
         { name: 'Total Users', value: String(total), inline: true },
         { name: 'Signups (24h)', value: String(last24h), inline: true },
       ],
@@ -1431,7 +1432,7 @@ const server = http.createServer(async (req, res) => {
       await queueUsersDbWrite();
 
       // Analytics beacon (non-critical)
-      _emitSignup(db, username, 'local', db.users[key].referredBy || null);
+      _emitSignup(db, username, 'local', db.users[key].referredBy || null, signupIp);
 
       // Clear referral cookie after signup to prevent accidental re-use.
       clearReferralCookie(res);
@@ -1953,7 +1954,7 @@ const server = http.createServer(async (req, res) => {
         await queueUsersDbWrite();
 
         // Analytics beacon
-        _emitSignup(db, `discord:${discordName}`, 'discord', db.users[userKey].referredBy || null);
+        _emitSignup(db, `discord:${discordName}`, 'discord', db.users[userKey].referredBy || null, discordSignupIp);
       }
 
       const token = crypto.randomBytes(32).toString('hex');
