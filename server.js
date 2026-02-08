@@ -928,17 +928,12 @@ function loadAdminDataFromDisk() {
 }
 
 function buildAdminDataSnapshot() {
-  // Strip screenshotB64 from payments to keep file size reasonable
-  const paymentsLite = adminPaymentLog.map(p => {
-    const { screenshotB64, ...rest } = p;
-    return rest;
-  });
   const lastSeenObj = {};
   for (const [k, v] of adminLastSeen) lastSeenObj[k] = v;
   return JSON.stringify({
     version: 1,
     signups: adminSignupLog,
-    payments: paymentsLite,
+    payments: adminPaymentLog,
     tiers: adminTierLog,
     categoryHits: adminCategoryHits,
     lastSeen: lastSeenObj,
