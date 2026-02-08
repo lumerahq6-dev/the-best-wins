@@ -857,7 +857,7 @@ function scheduleVisitStatsPersist() {
   }, 3000);
 }
 
-function recordVisit() {
+function recordVisit(req) {
   const now = Date.now();
   visitLog.push(now);
   visitAllTime++;
@@ -865,6 +865,34 @@ function recordVisit() {
   const cutoff24h = now - 86400000;
   while (visitLog.length > 0 && visitLog[0] < cutoff24h) visitLog.shift();
   scheduleVisitStatsPersist();
+
+  // Geo analytics: only from real page loads; ignore Railway internal IP.
+  try {
+    const ip = normalizeIp(getClientIp(req || {}));
+    if (ip && ip !== 'unknown' && ip !== '100.64.0.3') {
+      const rawCountry = String((req && req.headers && (req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'] || req.headers['cloudfront-viewer-country'])) || '').trim();
+      const rawRegion = String((req && req.headers && (req.headers['cf-region'] || req.headers['x-vercel-ip-country-region'])) || '').trim();
+      const rawCity = String((req && req.headers && (req.headers['cf-ipcity'] || req.headers['x-vercel-ip-city'])) || '').trim();
+
+      const country = rawCountry && rawCountry !== 'XX' ? rawCountry.toUpperCase() : '??';
+      adminGeo.countries[country] = (adminGeo.countries[country] || 0) + 1;
+
+      if (rawRegion) {
+        const rk = `${country}|${rawRegion}`;
+        adminGeo.regions[rk] = (adminGeo.regions[rk] || 0) + 1;
+      }
+      if (rawCity) {
+        const ck = `${country}|${rawRegion || ''}|${rawCity}`;
+        adminGeo.cities[ck] = (adminGeo.cities[ck] || 0) + 1;
+      }
+
+      adminGeo.recent.push({ ts: now, ip, country, region: rawRegion || null, city: rawCity || null });
+      if (adminGeo.recent.length > 500) adminGeo.recent.shift();
+      scheduleAdminPersist();
+    }
+  } catch {
+    // ignore
+  }
 }
 
 function getVisitStats() {
@@ -953,6 +981,7 @@ const adminPaymentLog   = []; // { ts, username, plan, method, screenshotB64 }
 const adminTierLog      = []; // { ts, username, tier }
 const adminCategoryHits = {}; // { 'Streamer Wins': 123, ... }
 const adminLastSeen     = new Map(); // userKey → timestamp (updated on every authed request)
+const adminGeo          = { countries: {}, regions: {}, cities: {}, recent: [] };
 
 function loadAdminDataFromDisk() {
   try {
@@ -978,6 +1007,12 @@ function loadAdminDataFromDisk() {
         if (typeof v === 'number') adminLastSeen.set(k, v);
       }
     }
+    if (d.geo && typeof d.geo === 'object') {
+      adminGeo.countries = (d.geo.countries && typeof d.geo.countries === 'object') ? d.geo.countries : {};
+      adminGeo.regions = (d.geo.regions && typeof d.geo.regions === 'object') ? d.geo.regions : {};
+      adminGeo.cities = (d.geo.cities && typeof d.geo.cities === 'object') ? d.geo.cities : {};
+      adminGeo.recent = Array.isArray(d.geo.recent) ? d.geo.recent : [];
+    }
     console.log(`Loaded admin analytics: ${adminSignupLog.length} signups, ${adminPaymentLog.length} payments, ${adminTierLog.length} tiers, ${Object.keys(adminCategoryHits).length} categories, ${adminLastSeen.size} lastSeen`);
   } catch (e) {
     console.error('Failed to load admin analytics:', e && e.message ? e.message : e);
@@ -1002,6 +1037,12 @@ async function loadAdminDataFromR2() {
         if (typeof v === 'number') adminLastSeen.set(k, v);
       }
     }
+    if (d.geo && typeof d.geo === 'object') {
+      adminGeo.countries = (d.geo.countries && typeof d.geo.countries === 'object') ? d.geo.countries : {};
+      adminGeo.regions = (d.geo.regions && typeof d.geo.regions === 'object') ? d.geo.regions : {};
+      adminGeo.cities = (d.geo.cities && typeof d.geo.cities === 'object') ? d.geo.cities : {};
+      adminGeo.recent = Array.isArray(d.geo.recent) ? d.geo.recent : [];
+    }
     console.log('Loaded admin analytics from R2');
     return true;
   } catch (e) {
@@ -1020,6 +1061,7 @@ function buildAdminDataSnapshot() {
     tiers: adminTierLog,
     categoryHits: adminCategoryHits,
     lastSeen: lastSeenObj,
+    geo: adminGeo,
   });
 }
 
@@ -1071,6 +1113,30 @@ function getActiveUsersNow() {
     if (ts >= cutoff) count++;
   }
   return count;
+}
+
+function getGeoSummary(maxRecent = 200, maxCountries = 50) {
+  const entries = Object.entries(adminGeo.countries || {});
+  entries.sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0) || String(a[0]).localeCompare(String(b[0])));
+  const countries = entries.slice(0, maxCountries).map(([code, count]) => ({ code, count: Number(count) || 0 }));
+  const recent = Array.isArray(adminGeo.recent) ? adminGeo.recent.slice(-maxRecent).reverse() : [];
+  return { countries, recent };
+}
+
+function planAmountCents(plan) {
+  const p = String(plan || '').toLowerCase();
+  if (p === 'tier1') return 599;
+  if (p === 'premium') return 999;
+  return 0;
+}
+
+function parseRevenueRange(range) {
+  const r = String(range || '').toLowerCase();
+  if (r === '1h') return 60 * 60 * 1000;
+  if (r === '12h') return 12 * 60 * 60 * 1000;
+  if (r === '24h') return 24 * 60 * 60 * 1000;
+  if (r === 'alltime') return null;
+  return 24 * 60 * 60 * 1000;
 }
 
 function getHourlyVisitData() {
@@ -1848,7 +1914,13 @@ const server = http.createServer(async (req, res) => {
           categoryHits: adminCategoryHits,
           hourlyVisits: hourly,
           chart,
+          geo: getGeoSummary(),
         });
+      }
+
+      // Geo analytics
+      if (requestUrl.pathname === '/admin/api/geo') {
+        return sendJson(res, 200, { geo: getGeoSummary(500, 200) });
       }
 
       // Recent signups
@@ -1858,7 +1930,24 @@ const server = http.createServer(async (req, res) => {
 
       // Recent payments
       if (requestUrl.pathname === '/admin/api/payments') {
-        return sendJson(res, 200, { payments: adminPaymentLog.slice().reverse() });
+        const range = requestUrl.searchParams.get('range') || '24h';
+        const ms = parseRevenueRange(range);
+        const cutoff = ms ? (Date.now() - ms) : null;
+        let cents = 0;
+        for (const p of adminPaymentLog) {
+          if (!p || typeof p !== 'object') continue;
+          if (cutoff && typeof p.ts === 'number' && p.ts < cutoff) continue;
+          cents += planAmountCents(p.plan);
+        }
+        return sendJson(res, 200, {
+          payments: adminPaymentLog.slice().reverse(),
+          revenue: {
+            range: String(range),
+            currency: 'USD',
+            cents,
+            usd: Math.round((cents / 100) * 100) / 100,
+          },
+        });
       }
 
       // Recent tier unlocks
@@ -3220,7 +3309,7 @@ const server = http.createServer(async (req, res) => {
 
     // Track page visits for analytics
     if (pathname.endsWith('.html') || requestUrl.pathname === '/') {
-      recordVisit();
+      recordVisit(req);
     }
 
     // Lock down Free Access page: redirect home.
