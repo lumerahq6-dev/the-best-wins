@@ -396,7 +396,7 @@ async function loadStats(){
   grid.innerHTML=`
     <div class="stat-card c-accent"><div class="s-icon">👥</div><div class="s-label">Total Users</div><div class="s-value">${fmtNum(d.totalUsers)}</div></div>
     <div class="stat-card c-cyan"><div class="s-icon">📈</div><div class="s-label">Signups (24h)</div><div class="s-value">${fmtNum(d.signups24h)}</div></div>
-    <div class="stat-card c-green"><div class="s-icon">🟢</div><div class="s-label">Active Now</div><div class="s-value">${fmtNum(d.activeNow)}</div><div class="s-sub">last 5 minutes</div></div>
+    <div class="stat-card c-green"><div class="s-icon">🟢</div><div class="s-label">Active Now</div><div class="s-value">${fmtNum(d.activeNow)}</div><div class="s-sub">last 20 seconds</div></div>
     <div class="stat-card c-cyan"><div class="s-icon">👁</div><div class="s-label">Visits (24h)</div><div class="s-value">${fmtNum(d.visits.past24h)}</div></div>
     <div class="stat-card c-accent"><div class="s-icon">⏱</div><div class="s-label">Visits (30m)</div><div class="s-value">${fmtNum(d.visits.past30m)}</div></div>
     <div class="stat-card c-orange"><div class="s-icon">📊</div><div class="s-label">All-Time Visits</div><div class="s-value">${fmtNum(d.visits.allTime)}</div></div>
@@ -512,7 +512,7 @@ async function loadPayments(){
     <td>${PLAN_LABELS[p.plan]||escHtml(p.plan)}</td>
     <td>${METHOD_LABELS[p.method]||escHtml(p.method)}</td>
     <td>${tierBadge(p.grantedTier)}</td>
-    <td>${p.screenshotB64?'<img class="screenshot-thumb" src="data:'+escHtml(p.contentType||'image/png')+';base64,'+p.screenshotB64+'" onclick="window._showSS(this.src)">':'—'}</td>
+    <td>${p.screenshotKey?'<img class="screenshot-thumb" src="/admin/payment-image?key='+encodeURIComponent(p.screenshotKey)+'" onclick="window._showSS(this.src)">':(p.screenshotB64?'<img class="screenshot-thumb" src="data:'+escHtml(p.contentType||'image/png')+';base64,'+p.screenshotB64+'" onclick="window._showSS(this.src)">':'—')}</td>
   </tr>`).join('');
   updateLiveTimes();
 }

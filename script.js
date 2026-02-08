@@ -113,6 +113,45 @@ function initDisclaimer() {
   });
 }
 
+// ===== PRESENCE HEARTBEAT (for Admin "Active Now") =====
+function initPresenceHeartbeat() {
+  let timer = null;
+
+  const ping = async () => {
+    try {
+      // only counts if user is authed; server returns {authed:false} otherwise
+      await fetch('/api/ping', { method: 'POST', cache: 'no-store' });
+    } catch {
+      // ignore
+    }
+  };
+
+  const start = () => {
+    if (timer) return;
+    ping();
+    timer = setInterval(() => {
+      if (document.visibilityState === 'visible') ping();
+    }, 10000);
+  };
+
+  const stop = () => {
+    if (!timer) return;
+    clearInterval(timer);
+    timer = null;
+  };
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      start();
+    } else {
+      // stop spamming if tab hidden
+      stop();
+    }
+  });
+
+  start();
+}
+
 // ===== FOLDER PAGE: LOAD MEDIA =====
 function initFolderPage() {
   const grid = document.querySelector('.media-grid');
@@ -413,6 +452,7 @@ function initTosDmcaPopup() {
 document.addEventListener('DOMContentLoaded', () => {
   initBackground();
   initDisclaimer();
+  initPresenceHeartbeat();
   initFolderPage();
 
   initAuthModal();

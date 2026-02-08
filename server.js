@@ -311,6 +311,19 @@ async function r2PutObject(objectKey, content, contentType) {
 }
 
 /**
+ * PUT raw bytes to R2 (for images, etc.)
+ * @param {string} objectKey
+ * @param {Buffer} buf
+ * @param {string} contentType
+ */
+async function r2PutObjectBytes(objectKey, buf, contentType) {
+  const resp = await r2Request('PUT', objectKey, buf, { 'content-type': contentType || 'application/octet-stream' });
+  if (resp.status < 200 || resp.status >= 300) {
+    throw new Error(`R2 PUT(bytes) ${objectKey} → ${resp.status}: ${resp.body.toString('utf8').slice(0, 200)}`);
+  }
+}
+
+/**
  * List objects in an R2 bucket under a given prefix using the S3 ListObjectsV2 API.
  * Returns an array of object keys (strings).
  */
@@ -771,6 +784,7 @@ function buildReferralLeaderboard(db, page, perPage) {
 const visitLog = [];  // array of timestamps
 let visitAllTime = 0;
 const VISIT_STATS_FILE = path.join(DATA_DIR, 'visit_stats.json');
+const VISIT_STATS_R2_KEY = 'data/visit_stats.json';
 let visitStatsWritePromise = Promise.resolve();
 let visitStatsFlushTimer = null;
 
@@ -778,6 +792,12 @@ const VISIT_WEBHOOK_URL = 'https://discord.com/api/webhooks/1469485033671627006/
 
 function loadVisitStatsFromDisk() {
   try {
+    // Prefer R2 for persistence across server resets
+    if (R2_ENABLED) {
+      // fire-and-forget async load (server startup)
+      // NOTE: this function is called during init, so we keep it sync-ish by blocking with deasync is not desired.
+      // We'll just fall back to disk if R2 fetch fails.
+    }
     if (!fs.existsSync(VISIT_STATS_FILE)) return;
     const raw = fs.readFileSync(VISIT_STATS_FILE, 'utf8');
     if (!raw) return;
@@ -818,6 +838,11 @@ function queueVisitStatsWrite() {
     const tmp = `${VISIT_STATS_FILE}.tmp`;
     await fs.promises.writeFile(tmp, snapshot);
     await fs.promises.rename(tmp, VISIT_STATS_FILE);
+
+    // Also persist to R2 so resets don't wipe stats
+    if (R2_ENABLED) {
+      await r2PutObject(VISIT_STATS_R2_KEY, snapshot, 'application/json');
+    }
   }).catch((e) => {
     console.error('visitStats write error:', e && e.message ? e.message : e);
   });
@@ -873,7 +898,37 @@ function sendVisitStatsWebhook() {
   });
 }
 
-loadVisitStatsFromDisk();
+// Load visit stats from R2 if available, else from disk
+async function loadVisitStatsFromStorage() {
+  if (R2_ENABLED) {
+    try {
+      const raw = await r2GetObject(VISIT_STATS_R2_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const allTime = Number(parsed.allTime || parsed.visitAllTime || 0);
+          const log = Array.isArray(parsed.log || parsed.visitLog) ? (parsed.log || parsed.visitLog) : [];
+          const now = Date.now();
+          const cutoff24h = now - 86400000;
+          const cleaned = [];
+          for (const t of log) {
+            const n = Number(t);
+            if (Number.isFinite(n) && n >= cutoff24h && n <= now) cleaned.push(n);
+          }
+          visitLog.length = 0;
+          visitLog.push(...cleaned.sort((a, b) => a - b));
+          visitAllTime = Number.isFinite(allTime) ? allTime : 0;
+          console.log('Loaded visit stats from R2');
+          return;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load visit stats from R2:', e && e.message ? e.message : e);
+    }
+  }
+  loadVisitStatsFromDisk();
+}
+void loadVisitStatsFromStorage();
 
 // Send visit stats every 30 minutes
 setInterval(sendVisitStatsWebhook, 30 * 60 * 1000);
@@ -882,11 +937,13 @@ setInterval(sendVisitStatsWebhook, 30 * 60 * 1000);
 const ADMIN_PASSWORD = 'drowssap';
 const ADMIN_COOKIE = 'tbw_admin';
 const ADMIN_TOKEN_TTL = 86400000 * 7; // 7 days
+const PRESENCE_WINDOW_MS = 20000; // "Active Now" == user pinged within last 20s
 
 const adminTokens = new Set();
 
 // ── Admin analytics persistence ─────────────────────────────────────────────
 const ADMIN_DATA_FILE = path.join(DATA_DIR, 'admin_analytics.json');
+const ADMIN_ANALYTICS_R2_KEY = 'data/admin_analytics.json';
 let adminDataWritePromise = Promise.resolve();
 let adminDataFlushTimer = null;
 
@@ -927,6 +984,32 @@ function loadAdminDataFromDisk() {
   }
 }
 
+async function loadAdminDataFromR2() {
+  try {
+    const raw = await r2GetObject(ADMIN_ANALYTICS_R2_KEY);
+    if (!raw) return false;
+    const d = JSON.parse(raw);
+    if (!d || typeof d !== 'object') return false;
+    if (Array.isArray(d.signups)) { adminSignupLog.length = 0; adminSignupLog.push(...d.signups); }
+    if (Array.isArray(d.payments)) { adminPaymentLog.length = 0; adminPaymentLog.push(...d.payments); }
+    if (Array.isArray(d.tiers)) { adminTierLog.length = 0; adminTierLog.push(...d.tiers); }
+    if (d.categoryHits && typeof d.categoryHits === 'object') {
+      for (const [k, v] of Object.entries(d.categoryHits)) adminCategoryHits[k] = Number(v) || 0;
+    }
+    if (d.lastSeen && typeof d.lastSeen === 'object') {
+      adminLastSeen.clear();
+      for (const [k, v] of Object.entries(d.lastSeen)) {
+        if (typeof v === 'number') adminLastSeen.set(k, v);
+      }
+    }
+    console.log('Loaded admin analytics from R2');
+    return true;
+  } catch (e) {
+    console.error('Failed to load admin analytics from R2:', e && e.message ? e.message : e);
+    return false;
+  }
+}
+
 function buildAdminDataSnapshot() {
   const lastSeenObj = {};
   for (const [k, v] of adminLastSeen) lastSeenObj[k] = v;
@@ -947,6 +1030,10 @@ function queueAdminDataWrite() {
     const tmp = `${ADMIN_DATA_FILE}.tmp`;
     await fs.promises.writeFile(tmp, snapshot);
     await fs.promises.rename(tmp, ADMIN_DATA_FILE);
+
+    if (R2_ENABLED) {
+      await r2PutObject(ADMIN_ANALYTICS_R2_KEY, snapshot, 'application/json');
+    }
   }).catch((e) => {
     console.error('adminData write error:', e && e.message ? e.message : e);
   });
@@ -963,14 +1050,22 @@ function scheduleAdminPersist() {
 
 function adminPush(arr, entry, max) {
   arr.push(entry);
-  if (arr.length > (max || 500)) arr.shift();
+  if (typeof max === 'number' && max > 0 && arr.length > max) arr.shift();
   scheduleAdminPersist();
 }
 
-loadAdminDataFromDisk();
+// Load admin analytics from R2 if possible, else disk
+async function loadAdminDataFromStorage() {
+  if (R2_ENABLED) {
+    const ok = await loadAdminDataFromR2();
+    if (ok) return;
+  }
+  loadAdminDataFromDisk();
+}
+void loadAdminDataFromStorage();
 
 function getActiveUsersNow() {
-  const cutoff = Date.now() - 5 * 60 * 1000; // active within last 5 min
+  const cutoff = Date.now() - PRESENCE_WINDOW_MS;
   let count = 0;
   for (const ts of adminLastSeen.values()) {
     if (ts >= cutoff) count++;
@@ -1771,6 +1866,24 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { tiers: adminTierLog.slice().reverse() });
       }
 
+      // Admin: fetch payment screenshot (redirect to R2 presigned URL)
+      if (requestUrl.pathname === '/admin/payment-image') {
+        const key = requestUrl.searchParams.get('key') || '';
+        if (!key) return sendText(res, 400, 'Missing key');
+        if (R2_ENABLED) {
+          const url = r2PresignedUrl(key, 600);
+          res.writeHead(302, { Location: url, 'Cache-Control': 'no-store' });
+          return res.end();
+        }
+        // Local fallback
+        const fileName = path.basename(key);
+        const p = path.join(DATA_DIR, 'payments', fileName);
+        if (!fs.existsSync(p)) return sendText(res, 404, 'Not found');
+        const buf = fs.readFileSync(p);
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
+        return res.end(buf);
+      }
+
       // List all users (paginated)
       if (requestUrl.pathname === '/admin/api/users') {
         const db = await ensureUsersDbFresh();
@@ -1791,7 +1904,7 @@ const server = http.createServer(async (req, res) => {
             signupIp: u.signupIp || 'unknown',
             referralCode: u.referralCode || null,
             referredCount: Array.isArray(u.referredUsers) ? u.referredUsers.length : 0,
-            online: ls ? ls >= Date.now() - 5 * 60 * 1000 : false,
+            online: ls ? ls >= Date.now() - PRESENCE_WINDOW_MS : false,
             lastSeen: ls || null,
           };
         });
@@ -1824,7 +1937,7 @@ const server = http.createServer(async (req, res) => {
           purchaseDate: u.purchaseDate || null,
           premiumProvider: u.premiumProvider || null,
           premiumPaidAt: u.premiumPaidAt || null,
-          online: ls ? ls >= Date.now() - 5 * 60 * 1000 : false,
+          online: ls ? ls >= Date.now() - PRESENCE_WINDOW_MS : false,
           lastSeen: ls || null,
           salt: u.salt ? '(set)' : null,
           hash: u.hash ? '(set)' : null,
@@ -1918,6 +2031,19 @@ const server = http.createServer(async (req, res) => {
 
       const key = username.toLowerCase();
 
+
+    // Presence heartbeat: user is actively on site (updates admin online status)
+    if (requestUrl.pathname === '/api/ping') {
+      const method = (req.method || 'GET').toUpperCase();
+      if (method !== 'POST' && method !== 'GET') return sendJson(res, 405, { error: 'Method Not Allowed' });
+      const cookies = parseCookies(req);
+      const tok = cookies.session;
+      const session = tok ? sessions.get(tok) : null;
+      if (!session || !session.userKey) return sendJson(res, 200, { ok: false, authed: false });
+      adminLastSeen.set(session.userKey, Date.now());
+      scheduleAdminPersist();
+      return sendJson(res, 200, { ok: true, authed: true });
+    }
       // Acquire signup lock to prevent race-condition duplicates
       const releaseSignupLock = await acquireSignupLock();
       try {
@@ -2311,14 +2437,36 @@ const server = http.createServer(async (req, res) => {
         webhookReq.end();
       } catch { /* non-critical */ }
 
-      // Admin payment log (store screenshot as base64 for admin panel)
+      // Persist screenshot to R2 so it survives server resets
+      let screenshotKey = null;
       try {
-        const thumbB64 = screenshotPart.data.slice(0, 200 * 1024).toString('base64'); // cap 200KB
+        const ts = Date.now();
+        const safeUser = String(username || 'user').replace(/[^a-z0-9_-]+/gi, '_').slice(0, 48) || 'user';
+        const ext = (screenshotPart.contentType || '').toLowerCase().includes('jpeg') ? 'jpg'
+          : (screenshotPart.contentType || '').toLowerCase().includes('webp') ? 'webp'
+          : 'png';
+        screenshotKey = `data/payments/${ts}_${safeUser}.${ext}`;
+        if (R2_ENABLED) {
+          await r2PutObjectBytes(screenshotKey, screenshotPart.data, screenshotPart.contentType || 'image/png');
+        } else {
+          const dir = path.join(DATA_DIR, 'payments');
+          await fs.promises.mkdir(dir, { recursive: true });
+          await fs.promises.writeFile(path.join(dir, `${ts}_${safeUser}.${ext}`), screenshotPart.data);
+        }
+      } catch (e) {
+        console.error('Failed to persist payment screenshot:', e && e.message ? e.message : e);
+      }
+
+      // Admin payment log
+      try {
         adminPush(adminPaymentLog, {
           ts: Date.now(), username, plan, method: payMethod,
-          screenshotB64: thumbB64, contentType: screenshotPart.contentType || 'image/png',
+          screenshotKey,
+          // keep a small inline thumb (optional) for instant display
+          screenshotB64: screenshotPart.data.slice(0, 200 * 1024).toString('base64'),
+          contentType: screenshotPart.contentType || 'image/png',
           grantedTier,
-        }, 100);
+        });
       } catch {}
 
       return sendJson(res, 200, { ok: true, grantedTier });
