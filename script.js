@@ -1115,7 +1115,24 @@ function initTierMegaUnlock() {
     });
   }
 
-  function openPayment() {
+  async function openPayment() {
+    // Require login before allowing payment
+    try {
+      const meResp = await fetch('/api/me', { cache: 'no-store' });
+      if (meResp.ok) {
+        const meData = await meResp.json();
+        if (!meData || !meData.authed) {
+          window.location.href = '/login.html';
+          return;
+        }
+      } else {
+        window.location.href = '/login.html';
+        return;
+      }
+    } catch {
+      window.location.href = '/login.html';
+      return;
+    }
     chosenPlan = null; chosenMethod = null; chosenFile = null;
     if (preview) { preview.style.display = 'none'; preview.src = ''; }
     if (submitBtn) submitBtn.disabled = true;

@@ -1836,13 +1836,16 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'No screenshot attached' });
       }
 
-      // Get user info if logged in & grant tier
+      // Get user info — require login
+      await ensureSessionsLoaded();
+      const userKey = getAuthedUserKey(req);
+      if (!userKey) {
+        return sendJson(res, 401, { error: 'You must be logged in to submit a payment.' });
+      }
       let username = 'anonymous';
       let grantedTier = 0;
       const tierForPlan = { tier1: 1, premium: 2 };
       try {
-        await ensureSessionsLoaded();
-        const userKey = getAuthedUserKey(req);
         if (userKey) {
           const db = await ensureUsersDbFresh();
           const record = db.users[userKey];
