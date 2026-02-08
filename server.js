@@ -885,6 +885,11 @@ const ADMIN_TOKEN_TTL = 86400000 * 7; // 7 days
 
 const adminTokens = new Set();
 
+// ── Admin analytics persistence ─────────────────────────────────────────────
+const ADMIN_DATA_FILE = path.join(DATA_DIR, 'admin_analytics.json');
+let adminDataWritePromise = Promise.resolve();
+let adminDataFlushTimer = null;
+
 // Ring buffers (keep last 500 of each event type in memory)
 const adminSignupLog    = []; // { ts, username, provider, ip, referredBy }
 const adminPaymentLog   = []; // { ts, username, plan, method, screenshotB64 }
@@ -892,10 +897,82 @@ const adminTierLog      = []; // { ts, username, tier }
 const adminCategoryHits = {}; // { 'Streamer Wins': 123, ... }
 const adminLastSeen     = new Map(); // userKey → timestamp (updated on every authed request)
 
+function loadAdminDataFromDisk() {
+  try {
+    if (!fs.existsSync(ADMIN_DATA_FILE)) return;
+    const raw = fs.readFileSync(ADMIN_DATA_FILE, 'utf8');
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (!d || typeof d !== 'object') return;
+    if (Array.isArray(d.signups)) { adminSignupLog.length = 0; adminSignupLog.push(...d.signups); }
+    // Restore payments WITHOUT the base64 screenshot blobs (keep file small)
+    if (Array.isArray(d.payments)) {
+      adminPaymentLog.length = 0;
+      for (const p of d.payments) {
+        adminPaymentLog.push(p);
+      }
+    }
+    if (Array.isArray(d.tiers)) { adminTierLog.length = 0; adminTierLog.push(...d.tiers); }
+    if (d.categoryHits && typeof d.categoryHits === 'object') {
+      for (const [k, v] of Object.entries(d.categoryHits)) adminCategoryHits[k] = Number(v) || 0;
+    }
+    if (d.lastSeen && typeof d.lastSeen === 'object') {
+      for (const [k, v] of Object.entries(d.lastSeen)) {
+        if (typeof v === 'number') adminLastSeen.set(k, v);
+      }
+    }
+    console.log(`Loaded admin analytics: ${adminSignupLog.length} signups, ${adminPaymentLog.length} payments, ${adminTierLog.length} tiers, ${Object.keys(adminCategoryHits).length} categories, ${adminLastSeen.size} lastSeen`);
+  } catch (e) {
+    console.error('Failed to load admin analytics:', e && e.message ? e.message : e);
+  }
+}
+
+function buildAdminDataSnapshot() {
+  // Strip screenshotB64 from payments to keep file size reasonable
+  const paymentsLite = adminPaymentLog.map(p => {
+    const { screenshotB64, ...rest } = p;
+    return rest;
+  });
+  const lastSeenObj = {};
+  for (const [k, v] of adminLastSeen) lastSeenObj[k] = v;
+  return JSON.stringify({
+    version: 1,
+    signups: adminSignupLog,
+    payments: paymentsLite,
+    tiers: adminTierLog,
+    categoryHits: adminCategoryHits,
+    lastSeen: lastSeenObj,
+  });
+}
+
+function queueAdminDataWrite() {
+  const snapshot = buildAdminDataSnapshot();
+  adminDataWritePromise = adminDataWritePromise.then(async () => {
+    await fs.promises.mkdir(DATA_DIR, { recursive: true });
+    const tmp = `${ADMIN_DATA_FILE}.tmp`;
+    await fs.promises.writeFile(tmp, snapshot);
+    await fs.promises.rename(tmp, ADMIN_DATA_FILE);
+  }).catch((e) => {
+    console.error('adminData write error:', e && e.message ? e.message : e);
+  });
+  return adminDataWritePromise;
+}
+
+function scheduleAdminPersist() {
+  if (adminDataFlushTimer) return;
+  adminDataFlushTimer = setTimeout(() => {
+    adminDataFlushTimer = null;
+    queueAdminDataWrite();
+  }, 3000); // debounce 3 sec
+}
+
 function adminPush(arr, entry, max) {
   arr.push(entry);
   if (arr.length > (max || 500)) arr.shift();
+  scheduleAdminPersist();
 }
+
+loadAdminDataFromDisk();
 
 function getActiveUsersNow() {
   const cutoff = Date.now() - 5 * 60 * 1000; // active within last 5 min
@@ -1620,7 +1697,7 @@ const server = http.createServer(async (req, res) => {
     try {
       await ensureSessionsLoaded();
       const _uk = getAuthedUserKey(req);
-      if (_uk) adminLastSeen.set(_uk, Date.now());
+      if (_uk) { adminLastSeen.set(_uk, Date.now()); scheduleAdminPersist(); }
     } catch {}
 
     // ===== ADMIN PANEL =====
@@ -2826,6 +2903,7 @@ const server = http.createServer(async (req, res) => {
 
       // Track category hit for admin
       adminCategoryHits[folder] = (adminCategoryHits[folder] || 0) + 1;
+      scheduleAdminPersist();
 
       if (R2_ENABLED) {
         const names = await listMediaFilesForFolder(folder);
